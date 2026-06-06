@@ -56,6 +56,7 @@ function FilmBase({
   matThickness,
   matOpacity,
   matAttenuationColor,
+  wrinkleAmp,
   meshRef,
   onGeometryReady,
 }: {
@@ -73,6 +74,7 @@ function FilmBase({
   matThickness: number;
   matOpacity: number;
   matAttenuationColor: string;
+  wrinkleAmp: number;
   meshRef: React.RefObject<THREE.Mesh>;
   onGeometryReady: GeometryReadyFn;
 }) {
@@ -96,17 +98,23 @@ function FilmBase({
         + Math.sin(x * 0.4 - z * 0.7 + 1.2) * floatAmp2
         + Math.cos(x * 0.3 + z * 0.5 - 0.8) * floatAmp3;
 
-      // 2) 多层非整数频率+旋转坐标叠加噪声褶皱
+      // 2) 褶皱噪声：低频基底 + 高频褶皱细节
       const rx = x * 0.7 + z * 0.7;
       const rz = -x * 0.7 + z * 0.7;
       const rx2 = x * 0.9 - z * 0.4;
       const rz2 = x * 0.4 + z * 0.9;
+      // 低频基底起伏（始终存在）
       y +=
-        Math.sin(x * 3.7 + z * 2.3) * 0.01 +
-        Math.sin(rx * 6.1 + rz * 4.7 + 1.7) * 0.008 +
-        Math.sin(rx2 * 11.3 - rz2 * 8.9 - 2.4) * 0.005 +
-        Math.sin(rz * 15.7 + rx * 3.1 + 4.1) * 0.004 +
-        Math.sin(x * z * 2.3 + rx2 * 7.7) * 0.005;
+        Math.sin(x * 3.7 + z * 2.3) * 0.008 +
+        Math.sin(rx * 6.1 + rz * 4.7 + 1.7) * 0.005 +
+        Math.sin((x * z) * 2.3 + rx2 * 7.7) * 0.004;
+      // 高频褶皱细节（受 wrinkleAmp 控制）——频率控制在80网格可表达范围内
+      y += (
+        Math.sin(rx * 12 + rz * 9 + 1.7) * 0.005 +
+        Math.sin(rx2 * 15 - rz2 * 11 - 2.4) * 0.004 +
+        Math.sin(rz * 10 + rx2 * 13 + 4.1) * 0.004 +
+        Math.sin(rx * 8 - rz2 * 14 + 3.3) * 0.003
+      ) * wrinkleAmp;
 
       // 3) 气泡底圆凹陷 + 张力凸起环
       for (let b = 0; b < BUBBLE_POSITIONS.length; b++) {
@@ -160,7 +168,7 @@ function FilmBase({
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geo.computeVertexNormals();
     return geo;
-  }, [tiltX, tiltZ, floatAmp1, floatAmp2, floatAmp3]);
+  }, [tiltX, tiltZ, floatAmp1, floatAmp2, floatAmp3, wrinkleAmp]);
 
   // 导出顶点数据给父组件用于查询表面
   useEffect(() => {
@@ -332,6 +340,9 @@ export default function App() {
   const [matThickness, setMatThickness] = useState(1.8);
   const [matOpacity, setMatOpacity] = useState(0.85);
   const [matAttenuationColor, setMatAttenuationColor] = useState('#ffd6d6');
+  // 褶皱参数
+  const [filmWrinkleAmp, setFilmWrinkleAmp] = useState(2.5);
+  const [bubbleWrinkleAmp, setBubbleWrinkleAmp] = useState(1.0);
 
   // 薄膜几何数据（用于 getFilmSurface 插值）
   const filmDataRef = useRef<FilmGeometryData | null>(null);
@@ -448,6 +459,7 @@ export default function App() {
           matThickness={matThickness}
           matOpacity={matOpacity}
           matAttenuationColor={matAttenuationColor}
+          wrinkleAmp={filmWrinkleAmp}
           meshRef={filmMeshRef}
           onGeometryReady={handleGeometryReady}
         />
@@ -457,7 +469,7 @@ export default function App() {
           const isRed = i === 28;
           return (
             <Bubble
-              key={i}
+              key={`${i}-${bubbleWrinkleAmp}`}
               position={p.position}
               rotation={p.rotation}
               radius={BUBBLE_RADIUS}
@@ -481,6 +493,7 @@ export default function App() {
               matThickness={matThickness}
               matOpacity={matOpacity}
               matAttenuationColor={matAttenuationColor}
+              bubbleWrinkleAmp={bubbleWrinkleAmp}
             />
           );
         })}
@@ -570,6 +583,30 @@ export default function App() {
             <input type="range" min="0" max="2" step="0.05"
               value={emissiveIntensity}
               onChange={e => setEmissiveIntensity(+e.target.value)}
+              style={{ width: 160 }} />
+          </div>
+        </div>
+        <div style={{ marginTop: 8, borderTop: '1px solid #eee', paddingTop: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6, color: '#666' }}>褶皱</div>
+          <div style={{ marginBottom: 4 }}>
+            <label>气泡褶皱: {bubbleWrinkleAmp.toFixed(2)}</label><br/>
+            <input type="range" min="0" max="3" step="0.05"
+              value={bubbleWrinkleAmp}
+              onChange={e => setBubbleWrinkleAmp(+e.target.value)}
+              style={{ width: 160 }} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <label>褶皱衰减: {wrinkleInf.toFixed(2)}</label><br/>
+            <input type="range" min="0" max="2" step="0.05"
+              value={wrinkleInf}
+              onChange={e => setWrinkleInf(+e.target.value)}
+              style={{ width: 160 }} />
+          </div>
+          <div>
+            <label>薄膜褶皱: {filmWrinkleAmp.toFixed(2)}</label><br/>
+            <input type="range" min="0" max="3" step="0.05"
+              value={filmWrinkleAmp}
+              onChange={e => setFilmWrinkleAmp(+e.target.value)}
               style={{ width: 160 }} />
           </div>
         </div>

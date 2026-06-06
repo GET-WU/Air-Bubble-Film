@@ -36,9 +36,10 @@ interface BubbleProps {
   matThickness?: number;
   matOpacity?: number;
   matAttenuationColor?: string;
+  bubbleWrinkleAmp?: number; // 气泡褶皱强度倍率
 }
 
-export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1, tractionStrength = 0.35, tractionRadius = 3.0, cylinderHeight: cylH = 0.8, domeHeight: domeH = 0.6, reboundSpringK = 120, reboundDamping = 4, reboundKick = 40, seed = 0, wrinkleInfluence = 1.0, color = 'default', longPress = false, longPressDuration = 1000, envMapIntensity = 0.6, emissiveColor = '#ff9300', emissiveInt = 0.3, matTransmission = 0.65, matRoughness = 0.4, matIor = 1.5, matThickness = 1.8, matOpacity = 0.95, matAttenuationColor = '#ffcc77' }: BubbleProps) {
+export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1, tractionStrength = 0.35, tractionRadius = 3.0, cylinderHeight: cylH = 0.8, domeHeight: domeH = 0.6, reboundSpringK = 120, reboundDamping = 4, reboundKick = 40, seed = 0, wrinkleInfluence = 1.0, color = 'default', longPress = false, longPressDuration = 1000, envMapIntensity = 0.6, emissiveColor = '#ff9300', emissiveInt = 0.3, matTransmission = 0.65, matRoughness = 0.4, matIor = 1.5, matThickness = 1.8, matOpacity = 0.95, matAttenuationColor = '#ffcc77', bubbleWrinkleAmp = 1.0 }: BubbleProps) {
   const groupRef = useRef<THREE.Group>(null);
   const domeRef = useRef<THREE.Mesh>(null);
   const capRef = useRef<THREE.Mesh>(null);
@@ -162,7 +163,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
         const heightRatio = isCylinder ? Math.min(y / (cylHeightVal * 0.3), 1) : 1;
         if (heightRatio < 0.01) continue;
     
-        const amp = isCylinder ? radius * 0.015 : radius * 0.008;
+        const amp = (isCylinder ? radius * 0.015 : radius * 0.008) * bubbleWrinkleAmp;
     
         // 旋转坐标打破统一方向性
         const rx = x * cosR - z * sinR;
@@ -201,7 +202,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
     // 记录圆柱部分顶点数
     cylinderVertexCount.current = (ringsCylinder + 1) * (segments + 1);
     return geo;
-  }, [radius, cylH, domeH, seed]);
+  }, [radius, cylH, domeH, seed, bubbleWrinkleAmp]);
 
   // Store original vertex positions once geometry is created
   useEffect(() => {
