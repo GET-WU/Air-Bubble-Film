@@ -13,6 +13,7 @@ const RECOVER_MS = 600;
 
 interface BubbleProps {
   position?: [number, number, number];
+  rotation?: [number, number, number];
   radius?: number;
   tractionStrength?: number; // 相对于radius的强度系数
   tractionRadius?: number;  // 相对于radius的影响范围倍数
@@ -26,9 +27,18 @@ interface BubbleProps {
   color?: 'default' | 'red'; // 气泡颜色
   longPress?: boolean;       // 是否启用长按戳破模式
   longPressDuration?: number; // 长按所需时长(ms)
+  envMapIntensity?: number;   // 环境贴图强度
+  emissiveColor?: string;     // 自发光颜色
+  emissiveInt?: number;       // 自发光强度
+  matTransmission?: number;
+  matRoughness?: number;
+  matIor?: number;
+  matThickness?: number;
+  matOpacity?: number;
+  matAttenuationColor?: string;
 }
 
-export function Bubble({ position = [0, 0, 0], radius = 1, tractionStrength = 0.35, tractionRadius = 3.0, cylinderHeight: cylH = 0.8, domeHeight: domeH = 0.6, reboundSpringK = 120, reboundDamping = 4, reboundKick = 40, seed = 0, wrinkleInfluence = 1.0, color = 'default', longPress = false, longPressDuration = 1000 }: BubbleProps) {
+export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1, tractionStrength = 0.35, tractionRadius = 3.0, cylinderHeight: cylH = 0.8, domeHeight: domeH = 0.6, reboundSpringK = 120, reboundDamping = 4, reboundKick = 40, seed = 0, wrinkleInfluence = 1.0, color = 'default', longPress = false, longPressDuration = 1000, envMapIntensity = 0.6, emissiveColor = '#ff9300', emissiveInt = 0.3, matTransmission = 0.65, matRoughness = 0.4, matIor = 1.5, matThickness = 1.8, matOpacity = 0.95, matAttenuationColor = '#ffcc77' }: BubbleProps) {
   const groupRef = useRef<THREE.Group>(null);
   const domeRef = useRef<THREE.Mesh>(null);
   const capRef = useRef<THREE.Mesh>(null);
@@ -642,6 +652,7 @@ export function Bubble({ position = [0, 0, 0], radius = 1, tractionStrength = 0.
       } else if (phase === 'deflated' && t >= DEFLATED_HOLD_MS) {
         phaseRef.current = 'recovering';
         elapsedRef.current = 0;
+        audioManager.playDrop();
       } else if (phase === 'recovering' && t >= RECOVER_MS) {
         phaseRef.current = 'idle';
         elapsedRef.current = 0;
@@ -692,7 +703,7 @@ export function Bubble({ position = [0, 0, 0], radius = 1, tractionStrength = 0.
   });
 
   return (
-    <group position={position}>
+    <group position={position} rotation={rotation}>
       {/* the bubble itself — dome + sealing cap, scaled together */}
       <group ref={groupRef}>
         <mesh
@@ -717,22 +728,24 @@ export function Bubble({ position = [0, 0, 0], radius = 1, tractionStrength = 0.
           }}
         >
           <meshPhysicalMaterial
-            transmission={0.65}
-            thickness={1.8}
-            roughness={0.4}
+            transmission={matTransmission}
+            thickness={matThickness}
+            roughness={matRoughness}
             iridescence={0.2}
             iridescenceIOR={1.3}
             iridescenceThicknessRange={[200, 400]}
             clearcoat={0.15}
             clearcoatRoughness={0.4}
-            ior={1.5}
+            ior={matIor}
             metalness={0}
             transparent
-            opacity={0.95}
+            opacity={matOpacity}
             side={THREE.DoubleSide}
-            attenuationColor={color === 'red' ? '#ff4444' : '#ffcc77'}
+            attenuationColor={color === 'red' ? '#ff4444' : matAttenuationColor}
             attenuationDistance={0.8}
-            envMapIntensity={0.3}
+            envMapIntensity={envMapIntensity}
+            emissive={color === 'red' ? '#ff4444' : emissiveColor}
+            emissiveIntensity={emissiveInt}
           >
             <GradientTexture
               attach="map"
@@ -745,15 +758,15 @@ export function Bubble({ position = [0, 0, 0], radius = 1, tractionStrength = 0.
         {/* underside — closes the hemisphere; faintly visible from low angles */}
         <mesh ref={capRef} geometry={capGeometry} position={[0, 0.001, 0]}>
           <meshPhysicalMaterial
-            transmission={0.6}
-            thickness={1.2}
-            roughness={0.45}
-            ior={1.5}
+            transmission={matTransmission}
+            thickness={matThickness}
+            roughness={matRoughness}
+            ior={matIor}
             metalness={0}
             transparent
-            opacity={0.6}
+            opacity={matOpacity}
             side={THREE.DoubleSide}
-            attenuationColor="#ffcc77"
+            attenuationColor={matAttenuationColor}
             attenuationDistance={1.0}
           />
         </mesh>

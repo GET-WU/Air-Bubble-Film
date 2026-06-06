@@ -71,6 +71,39 @@ class BubbleAudioManager {
       this.activeSounds--;
     }, 150);
   }
+
+  /** 水滴音效：上行正弦波 + 微弱混响，模拟气泡充气恢复 */
+  playDrop() {
+    this.ensureContext();
+    if (this.activeSounds >= this.maxConcurrent) return;
+
+    const ctx = this.audioContext!;
+    const now = ctx.currentTime;
+    const pitch = 0.9 + Math.random() * 0.2;
+
+    this.activeSounds++;
+
+    // 上行正弦波（水滴的“叮”）
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800 * pitch, now);
+    osc.frequency.exponentialRampToValueAtTime(2000 * pitch, now + 0.06);
+    osc.frequency.exponentialRampToValueAtTime(1200 * pitch, now + 0.15);
+
+    const oscGain = ctx.createGain();
+    oscGain.gain.setValueAtTime(0.25, now);
+    oscGain.gain.linearRampToValueAtTime(0.3, now + 0.02);
+    oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+
+    osc.connect(oscGain);
+    oscGain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.2);
+
+    setTimeout(() => {
+      this.activeSounds--;
+    }, 250);
+  }
 }
 
 export const audioManager = new BubbleAudioManager();
