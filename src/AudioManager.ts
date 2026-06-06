@@ -1,6 +1,6 @@
 /**
  * BubbleAudioManager
- * - Synthesizes a "pop" via white-noise burst + downward sine sweep.
+ * - Plays audio files for pop, recover, and squeeze effects.
  * - Lazy-creates AudioContext to comply with iOS gesture-required policy.
  * - Caps simultaneous voices to avoid clipping on rapid drags.
  */
@@ -8,6 +8,9 @@ class BubbleAudioManager {
   private audioContext: AudioContext | null = null;
   private activeSounds = 0;
   private maxConcurrent = 10;
+  private recoverBuffer: AudioBuffer | null = null;
+  private squeezeBuffer: AudioBuffer | null = null;
+  private popBuffer: AudioBuffer | null = null;
 
   private ensureContext() {
     if (!this.audioContext) {
@@ -19,90 +22,67 @@ class BubbleAudioManager {
     }
   }
 
+  private async loadBuffer(url: string): Promise<AudioBuffer> {
+    const resp = await fetch(url);
+    const arrayBuf = await resp.arrayBuffer();
+    return this.audioContext!.decodeAudioData(arrayBuf);
+  }
+
   play() {
     this.ensureContext();
     if (this.activeSounds >= this.maxConcurrent) return;
-
-    const ctx = this.audioContext!;
-    const now = ctx.currentTime;
-    const pitch = 0.8 + Math.random() * 0.4;
-    const volume = 0.85 + Math.random() * 0.3;
-
     this.activeSounds++;
-
-    // ── white-noise burst (the crisp "snap") ────────────────────
-    const bufferSize = ctx.sampleRate * 0.12;
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-
-    const highPass = ctx.createBiquadFilter();
-    highPass.type = 'highpass';
-    highPass.frequency.value = 2000;
-
-    const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0, now);
-    noiseGain.gain.linearRampToValueAtTime(volume * 0.4, now + 0.005);
-    noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
-
-    noise.connect(highPass);
-    highPass.connect(noiseGain);
-    noiseGain.connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.1);
-
-    // ── sine "thud" (the body of the pop) ───────────────────────
-    const osc = ctx.createOscillator();
-    const oscGain = ctx.createGain();
-    osc.frequency.setValueAtTime(600 * pitch, now);
-    osc.frequency.exponentialRampToValueAtTime(100 * pitch, now + 0.08);
-    oscGain.gain.setValueAtTime(volume * 0.3, now);
-    oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
-    osc.connect(oscGain);
-    oscGain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.08);
-
-    setTimeout(() => {
-      this.activeSounds--;
-    }, 150);
+    const startPlayback = async () => {
+      if (!this.popBuffer) {
+        this.popBuffer = await this.loadBuffer('/pop.mp4');
+      }
+      const source = this.audioContext!.createBufferSource();
+      source.buffer = this.popBuffer;
+      source.playbackRate.value = 0.95 + Math.random() * 0.2;
+      // 高通滤波增强清脆感
+      const highpass = this.audioContext!.createBiquadFilter();
+      highpass.type = 'highpass';
+      highpass.frequency.value = 800;
+      source.connect(highpass);
+      highpass.connect(this.audioContext!.destination);
+      source.start();
+      source.onended = () => { this.activeSounds--; };
+    };
+    startPlayback();
   }
 
-  /** 水滴音效：上行正弦波 + 微弱混响，模拟气泡充气恢复 */
-  playDrop() {
+  async playRecover() {
     this.ensureContext();
-    if (this.activeSounds >= this.maxConcurrent) return;
+    if (!this.recoverBuffer) {
+      this.recoverBuffer = await this.loadBuffer('/recover.mp4');
+    }
+    const source = this.audioContext!.createBufferSource();
+    source.buffer = this.recoverBuffer;
+    source.playbackRate.value = 0.9 + Math.random() * 0.2;
+    source.connect(this.audioContext!.destination);
+    source.start();
+  }
 
-    const ctx = this.audioContext!;
-    const now = ctx.currentTime;
-    const pitch = 0.9 + Math.random() * 0.2;
+  playSqueeze(): { stop: () => void } {
+    this.ensureContext();
+    let source: AudioBufferSourceNode | null = null;
+    const startPlayback = async () => {
+      if (!this.squeezeBuffer) {
+        this.squeezeBuffer = await this.loadBuffer('/squeeze.mp4');
+      }
+      source = this.audioContext!.createBufferSource();
+      source.buffer = this.squeezeBuffer;
+      source.connect(this.audioContext!.destination);
+      source.start();
+    };
+    startPlayback();
+    return {
+      stop: () => { if (source) { try { source.stop(); } catch {} } }
+    };
+  }
 
-    this.activeSounds++;
-
-    // 上行正弦波（水滴的“叮”）
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(800 * pitch, now);
-    osc.frequency.exponentialRampToValueAtTime(2000 * pitch, now + 0.06);
-    osc.frequency.exponentialRampToValueAtTime(1200 * pitch, now + 0.15);
-
-    const oscGain = ctx.createGain();
-    oscGain.gain.setValueAtTime(0.25, now);
-    oscGain.gain.linearRampToValueAtTime(0.3, now + 0.02);
-    oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-
-    osc.connect(oscGain);
-    oscGain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.2);
-
-    setTimeout(() => {
-      this.activeSounds--;
-    }, 250);
+  playDrop() {
+    this.playRecover();
   }
 }
 

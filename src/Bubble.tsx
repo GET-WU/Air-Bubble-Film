@@ -63,6 +63,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
   // 长按戳破状态
   const isPressing = useRef(false);
   const pressStartTime = useRef(0);
+  const squeezeCtrlRef = useRef<{ stop: () => void } | null>(null);
   // 投影平面设在气泡顶部高度，45°等距视角下视觉位置与XZ坐标正确对应
   const intersectPlane = useMemo(
     () => new THREE.Plane(new THREE.Vector3(0, 1, 0), -(position[1] + radius)),
@@ -266,10 +267,12 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
       // 红色气泡：滑入时开始长按计时
       isPressing.current = true;
       pressStartTime.current = performance.now();
+      squeezeCtrlRef.current = audioManager.playSqueeze();
     } else {
       // 普通气泡：直接戳破
       phaseRef.current = 'deflating';
       elapsedRef.current = 0;
+      hoverScaleY.current = 1.2 / cylH; // 设置hover拉高状态，恢复后产生弹性回落
       audioManager.play();
     }
   };
@@ -281,12 +284,20 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
     if (phaseRef.current !== 'idle') return;
     isPressing.current = true;
     pressStartTime.current = performance.now();
+    squeezeCtrlRef.current = audioManager.playSqueeze();
   };
 
   // 长按模式下监听全局 pointerup，松开即终止按压
   useEffect(() => {
     if (!longPress) return;
-    const onUp = () => { isPressing.current = false; };
+    const onUp = () => {
+      isPressing.current = false;
+      // 未触发爆破时停止挤压音效
+      if (squeezeCtrlRef.current) {
+        squeezeCtrlRef.current.stop();
+        squeezeCtrlRef.current = null;
+      }
+    };
     window.addEventListener('pointerup', onUp);
     return () => window.removeEventListener('pointerup', onUp);
   }, [longPress]);
@@ -332,11 +343,12 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
         g.position.z = Math.cos(now * 0.1) * shakeAmp;
     
         if (pressProgress >= 1) {
-          // 达阈：触发 deflating，重置
+          // 达阈：触发 deflating，重置（不播 pop 音效，挤压音效自然播完）
           phaseRef.current = 'deflating';
           elapsedRef.current = 0;
-          audioManager.play();
           isPressing.current = false;
+          // 爆破时不停止挤压音效，让其自然播完
+          squeezeCtrlRef.current = null;
           g.position.x = 0;
           g.position.z = 0;
         }
@@ -506,7 +518,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
       } else {
         // recovering：前半段慢后半段快（easeIn），曲线更陡峣
         const tn = Math.min(t / RECOVER_MS, 1);
-        p = 1 - tn * tn * tn * tn;
+        p = 1 - tn * tn * tn * tn * tn * tn;
       }
 
       const posAttr = domeGeometry.attributes.position;
@@ -653,7 +665,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
       } else if (phase === 'deflated' && t >= DEFLATED_HOLD_MS) {
         phaseRef.current = 'recovering';
         elapsedRef.current = 0;
-        audioManager.playDrop();
+        setTimeout(() => audioManager.playRecover(), 400);
       } else if (phase === 'recovering' && t >= RECOVER_MS) {
         phaseRef.current = 'idle';
         elapsedRef.current = 0;
@@ -725,7 +737,13 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
             setHovered(false);
             document.body.style.cursor = 'auto';
             // 长按模式下离开气泡即取消按压
-            isPressing.current = false;
+            if (isPressing.current) {
+              isPressing.current = false;
+              if (squeezeCtrlRef.current) {
+                squeezeCtrlRef.current.stop();
+                squeezeCtrlRef.current = null;
+              }
+            }
           }}
         >
           <meshPhysicalMaterial

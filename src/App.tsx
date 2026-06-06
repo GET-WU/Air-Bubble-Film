@@ -98,17 +98,18 @@ function FilmBase({
         + Math.sin(x * 0.4 - z * 0.7 + 1.2) * floatAmp2
         + Math.cos(x * 0.3 + z * 0.5 - 0.8) * floatAmp3;
 
-      // 2) 褶皱噪声：低频基底 + 高频褶皱细节
+      // 2) 多层非整数频率+旋转坐标叠加噪声褶皱
       const rx = x * 0.7 + z * 0.7;
       const rz = -x * 0.7 + z * 0.7;
       const rx2 = x * 0.9 - z * 0.4;
-      // 低频基底起伏（始终存在）
-      y +=
-        Math.sin(x * 3.7 + z * 2.3) * 0.008 +
-        Math.sin(rx * 6.1 + rz * 4.7 + 1.7) * 0.005 +
-        Math.sin((x * z) * 2.3 + rx2 * 7.7) * 0.004;
-      // 高频褶皱细节——通过法线扰动实现，不修改顶点位置，避免暴露网格
-      // （在 computeVertexNormals 之后叠加）
+      const rz2 = x * 0.4 + z * 0.9;
+      y += (
+        Math.sin(x * 3.7 + z * 2.3) * 0.01 +
+        Math.sin(rx * 6.1 + rz * 4.7 + 1.7) * 0.008 +
+        Math.sin(rx2 * 11.3 - rz2 * 8.9 - 2.4) * 0.005 +
+        Math.sin(rz * 15.7 + rx * 3.1 + 4.1) * 0.004 +
+        Math.sin((x * z) * 2.3 + rx2 * 7.7) * 0.005
+      ) * wrinkleAmp;
 
       // 3) 气泡底圆凹陷 + 张力凸起环
       for (let b = 0; b < BUBBLE_POSITIONS.length; b++) {
@@ -161,38 +162,6 @@ function FilmBase({
     }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geo.computeVertexNormals();
-
-    // 法线扰动：在计算法线后叠加高频噪声，模拟褶皱光影细节
-    if (wrinkleAmp > 0) {
-      const normalAttr = geo.attributes.normal;
-      const posAttr = geo.attributes.position;
-      for (let i = 0; i < normalAttr.count; i++) {
-        const x = posAttr.getX(i);
-        const z = posAttr.getZ(i);
-        // 多层旋转坐标噪声生成法线偏移
-        const rx = x * 0.7 + z * 0.7;
-        const rz = -x * 0.7 + z * 0.7;
-        const rx2 = x * 0.9 - z * 0.4;
-        const rz2 = x * 0.4 + z * 0.9;
-        const pertX = (
-          Math.sin(rx * 15 + rz * 11 + 1.7) * 0.3 +
-          Math.sin(rx2 * 22 - rz2 * 17 - 2.4) * 0.25 +
-          Math.sin(rz * 30 + rx * 25 + 4.1) * 0.2 +
-          Math.sin(rx2 * 40 - rz * 33 + 3.3) * 0.15
-        ) * wrinkleAmp * 0.1;
-        const pertZ = (
-          Math.sin(rz * 14 + rx * 12 + 2.3) * 0.3 +
-          Math.sin(rz2 * 20 - rx2 * 18 - 1.1) * 0.25 +
-          Math.sin(rx * 28 + rz2 * 23 + 5.2) * 0.2 +
-          Math.sin(rz * 37 - rx2 * 30 + 2.7) * 0.15
-        ) * wrinkleAmp * 0.1;
-        const nx = normalAttr.getX(i) + pertX;
-        const ny = normalAttr.getY(i);
-        const nz = normalAttr.getZ(i) + pertZ;
-        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        normalAttr.setXYZ(i, nx / len, ny / len, nz / len);
-      }
-    }
 
     return geo;
   }, [tiltX, tiltZ, floatAmp1, floatAmp2, floatAmp3, wrinkleAmp]);
@@ -363,7 +332,7 @@ export default function App() {
   // 材质参数
   const [matTransmission, setMatTransmission] = useState(0.6);
   const [matRoughness, setMatRoughness] = useState(0.4);
-  const [matIor, setMatIor] = useState(1.4);
+  const [matIor, setMatIor] = useState(2.5);
   const [matThickness, setMatThickness] = useState(1.8);
   const [matOpacity, setMatOpacity] = useState(0.85);
   const [matAttenuationColor, setMatAttenuationColor] = useState('#ffd6d6');
