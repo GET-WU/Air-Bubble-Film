@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Font Preview - Display Serif</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,700;1,400&family=Cormorant:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Libre+Caslon+Display&family=Yeseva+One&family=Oranienbaum&family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Spectral:ital,wght@0,200;0,300;0,400;1,200;1,300&family=Dancing+Script:wght@400;500;600&family=Caveat:wght@400;500;600&family=Satisfy&family=Great+Vibes&family=Pacifico&family=Sacramento&family=Alex+Brush&family=Allura&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #f5f0eb;
+    min-height: 100vh;
+    padding: 60px 40px;
+    color: #574373;
+  }
+  h1 {
+    text-align: center;
+    font-family: 'Cormorant', serif;
+    font-weight: 300;
+    font-size: 14px;
+    margin-bottom: 60px;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    color: #999;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 48px 40px;
+    box-shadow: 0 2px 20px rgba(87,67,115,0.06);
+    transition: transform 0.3s;
+  }
+  .card:hover { transform: translateY(-6px); box-shadow: 0 8px 40px rgba(87,67,115,0.1); }
+  .font-name {
+    font-family: 'Cormorant', serif;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 4px;
+    color: #aaa;
+    margin-bottom: 20px;
+  }
+  .sample { color: #574373; margin-bottom: 16px; line-height: 1.2; }
+  .sample.hero { font-size: 56px; margin-bottom: 24px; }
+  .sample.sub { font-size: 28px; font-style: italic; color: #7a6495; }
+  .sample.caps { font-size: 13px; letter-spacing: 2px; color: #999; margin-top: 20px; }
+  .desc { font-family: 'Cormorant', serif; font-size: 13px; color: #bbb; margin-top: 16px; font-style: italic; }
+
+  .f1 .sample { font-family: 'Bodoni Moda', serif; }
+  .f2 .sample { font-family: 'Cormorant', serif; }
+  .f3 .sample { font-family: 'Playfair Display', serif; }
+  .f4 .sample { font-family: 'Libre Caslon Display', serif; }
+  .f5 .sample { font-family: 'Yeseva One', cursive; }
+  .f6 .sample { font-family: 'Oranienbaum', serif; }
+  .f7 .sample { font-family: 'Cormorant Garamond', serif; }
+  .f8 .sample { font-family: 'Spectral', serif; }
+  .f9 .sample { font-family: 'Dancing Script', cursive; }
+  .f10 .sample { font-family: 'Caveat', cursive; }
+  .f11 .sample { font-family: 'Great Vibes', cursive; }
+  .f12 .sample { font-family: 'Satisfy', cursive; }
+  .f13 .sample { font-family: 'Sacramento', cursive; }
+  .f14 .sample { font-family: 'Alex Brush', cursive; }
+  .f15 .sample { font-family: 'Allura', cursive; }
+  .f16 .sample { font-family: 'Pacifico', cursive; }
+</style>
+</head>
+<body>
+<h1>Display Serif · Modern Elegance</h1>
+<div class="grid">
+
+  <div class="card f1">
+    <div class="font-name">Bodoni Moda</div>
+    <div class="sample hero">Belgan</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps">ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+    <div class="desc">极致粗细对比，最接近 Belgan/Magnat 风格</div>
+  </div>
+
+  <div class="card f2">
+    <div class="font-name">Cormorant</div>
+    <div class="sample hero" style="font-weight:300">Lugon</div>
+    <div class="sample sub" style="font-weight:300;font-style:italic">Air Bubble Film</div>
+    <div class="sample caps" style="font-weight:600">ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+    <div class="desc">优雅纤细，高对比衬线，免费中最接近奢侈品感</div>
+  </div>
+
+  <div class="card f3">
+    <div class="font-name">Playfair Display</div>
+    <div class="sample hero">Maguin</div>
+    <div class="sample sub" style="font-style:italic">Air Bubble Film</div>
+    <div class="sample caps">ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+    <div class="desc">经典高对比 Display，斜体带花饰笔画</div>
+  </div>
+
+  <div class="card f4">
+    <div class="font-name">Libre Caslon Display</div>
+    <div class="sample hero">Pearl</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps">ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+    <div class="desc">古典大字号衬线，锐利精致</div>
+  </div>
+
+  <div class="card f5">
+    <div class="font-name">Yeseva One</div>
+    <div class="sample hero">Helcy</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps">ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+    <div class="desc">装饰性衬线体，带俏皮笔触和球形终端</div>
+  </div>
+
+  <div class="card f6">
+    <div class="font-name">Oranienbaum</div>
+    <div class="sample hero">Valky</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps">ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+    <div class="desc">现代窄体衬线，几何感强，适合标题</div>
+  </div>
+
+  <div class="card f7">
+    <div class="font-name">Cormorant Garamond</div>
+    <div class="sample hero" style="font-weight:300">Agoka</div>
+    <div class="sample sub" style="font-style:italic;font-weight:300">Air Bubble Film</div>
+    <div class="sample caps">ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+    <div class="desc">法式优雅，极细笔画 + 戏剧性对比</div>
+  </div>
+
+  <div class="card f8">
+    <div class="font-name">Spectral</div>
+    <div class="sample hero" style="font-weight:200">Doky</div>
+    <div class="sample sub" style="font-weight:300;font-style:italic">Air Bubble Film</div>
+    <div class="sample caps" style="font-weight:400">ABCDEFGHIJKLMNOPQRSTUVWXYZ</div>
+    <div class="desc">Google出品，超细权重可用，现代优雅</div>
+  </div>
+
+  <div class="card f9">
+    <div class="font-name">Dancing Script</div>
+    <div class="sample hero" style="font-weight:400">Bubble</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps" style="letter-spacing:0">abcdefghijklmnopqrstuvwxyz</div>
+    <div class="desc">活泼跳跃的手写体，笔触轻快</div>
+  </div>
+
+  <div class="card f10">
+    <div class="font-name">Caveat</div>
+    <div class="sample hero">Bubble</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps" style="letter-spacing:0">abcdefghijklmnopqrstuvwxyz</div>
+    <div class="desc">随性涂鸦感，自然手写笔迹</div>
+  </div>
+
+  <div class="card f11">
+    <div class="font-name">Great Vibes</div>
+    <div class="sample hero">Bubble</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps" style="letter-spacing:0">abcdefghijklmnopqrstuvwxyz</div>
+    <div class="desc">花体草书，优雅连笔，奢侈品风</div>
+  </div>
+
+  <div class="card f12">
+    <div class="font-name">Satisfy</div>
+    <div class="sample hero">Bubble</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps" style="letter-spacing:0">abcdefghijklmnopqrstuvwxyz</div>
+    <div class="desc">流畅连笔，复古签名感</div>
+  </div>
+
+  <div class="card f13">
+    <div class="font-name">Sacramento</div>
+    <div class="sample hero">Bubble</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps" style="letter-spacing:0">abcdefghijklmnopqrstuvwxyz</div>
+    <div class="desc">细线草书，轻盈飘逸，适合气泡轻盈感</div>
+  </div>
+
+  <div class="card f14">
+    <div class="font-name">Alex Brush</div>
+    <div class="sample hero">Bubble</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps" style="letter-spacing:0">abcdefghijklmnopqrstuvwxyz</div>
+    <div class="desc">笔刷草书，浪漫优雅，细节精致</div>
+  </div>
+
+  <div class="card f15">
+    <div class="font-name">Allura</div>
+    <div class="sample hero">Bubble</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps" style="letter-spacing:0">abcdefghijklmnopqrstuvwxyz</div>
+    <div class="desc">典雅花体草书，笔触圆润流畅</div>
+  </div>
+
+  <div class="card f16">
+    <div class="font-name">Pacifico</div>
+    <div class="sample hero">Bubble</div>
+    <div class="sample sub">Air Bubble Film</div>
+    <div class="sample caps" style="letter-spacing:0">abcdefghijklmnopqrstuvwxyz</div>
+    <div class="desc">复古冲浪风，圆润休闲，轻松活泼</div>
+  </div>
+
+</div>
+</body>
+</html>

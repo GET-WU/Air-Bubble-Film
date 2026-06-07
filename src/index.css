@@ -11,9 +11,25 @@ body,
   height: 100%;
   overflow: hidden;
   touch-action: none;
+  background: #f5f0eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 canvas {
   display: block;
   outline: none;
+}
+
+.app-container {
+  width: 100vmin;
+  height: 100vmin;
+}
+
+@media (max-aspect-ratio: 1/1) {
+  .app-container {
+    width: 100vw;
+    height: 100vh;
+  }
 }

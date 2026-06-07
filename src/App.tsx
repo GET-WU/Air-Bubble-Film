@@ -57,6 +57,8 @@ function FilmBase({
   matOpacity,
   matAttenuationColor,
   wrinkleAmp,
+  gradientColors,
+  gradientRotation,
   meshRef,
   onGeometryReady,
 }: {
@@ -75,6 +77,8 @@ function FilmBase({
   matOpacity: number;
   matAttenuationColor: string;
   wrinkleAmp: number;
+  gradientColors: [string, string, string];
+  gradientRotation: number;
   meshRef: React.RefObject<THREE.Mesh>;
   onGeometryReady: GeometryReadyFn;
 }) {
@@ -204,7 +208,8 @@ function FilmBase({
         <GradientTexture
           attach="map"
           stops={[0, 0.4, 1]}
-          colors={['#b8d8f8', '#ffeaa0', '#d4eab8']}
+          colors={gradientColors}
+          rotation={gradientRotation}
         />
       </meshPhysicalMaterial>
     </mesh>
@@ -256,6 +261,8 @@ function MouseLight({ filmMeshRef, intensity, color, heightOffset, distance, dec
 }) {
   const lightRef = useRef<THREE.PointLight>(null);
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
+  const heightRef = useRef(heightOffset);
+  heightRef.current = heightOffset;
 
   useFrame((state) => {
     if (!lightRef.current || !filmMeshRef.current) return;
@@ -263,7 +270,7 @@ function MouseLight({ filmMeshRef, intensity, color, heightOffset, distance, dec
     const intersects = raycaster.intersectObject(filmMeshRef.current);
     if (intersects.length > 0) {
       const p = intersects[0].point;
-      lightRef.current.position.set(p.x, p.y + heightOffset, p.z);
+      lightRef.current.position.set(p.x, p.y + heightRef.current, p.z);
     }
   });
 
@@ -271,7 +278,7 @@ function MouseLight({ filmMeshRef, intensity, color, heightOffset, distance, dec
 }
 
 function CameraController({ azimuth }: { azimuth: number }) {
-  const { camera } = useThree();
+  const { camera, size } = useThree();
   useFrame(() => {
     const dist = 10;
     const elevation = Math.PI / 4;
@@ -280,6 +287,17 @@ function CameraController({ azimuth }: { azimuth: number }) {
     const z = dist * Math.cos(elevation) * Math.cos(azimuth);
     camera.position.set(x, y, z);
     camera.lookAt(0, 0, 0);
+    // 动态zoom：内容保持固定视觉大小，当超过画布98%时才缩小
+    const contentDiag = 11.9;
+    const baseZoom = 55; // 基准zoom（大屏下82%填充）
+    const maxFill = 0.98;
+    const fillAtBase = contentDiag * baseZoom / size.width;
+    const ortho = camera as THREE.OrthographicCamera;
+    if (fillAtBase <= maxFill) {
+      ortho.zoom = baseZoom; // 未超限，保持固定大小
+    } else {
+      ortho.zoom = size.width * maxFill / contentDiag; // 超限，缩小到刚好98%
+    }
     camera.updateProjectionMatrix();
   });
   return null;
@@ -336,14 +354,86 @@ export default function App() {
   const [matThickness, setMatThickness] = useState(1.8);
   const [matOpacity, setMatOpacity] = useState(0.85);
   const [matAttenuationColor, setMatAttenuationColor] = useState('#ffd6d6');
-  // 褶皱参数
+  // 褒皱参数
   const [filmWrinkleAmp, setFilmWrinkleAmp] = useState(2.5);
   const [bubbleWrinkleAmp, setBubbleWrinkleAmp] = useState(1.0);
-
+  // 调试
+  const [debugFlat, setDebugFlat] = useState(false);
+  // 普通气泡/薄膜渐变色
+  const [gradient1, setGradient1] = useState('#ffffe1');
+  const [gradient2, setGradient2] = useState('#ffffe1');
+  const [gradient3, setGradient3] = useState('#b4dcf0');
+  const [filmGradientRotation, setFilmGradientRotation] = useState(4.904);
+  // 特殊气泡独立参数
+  const [specialAttenuationColor, setSpecialAttenuationColor] = useState('#ffd6d6');
+  const [specialEmissiveColor, setSpecialEmissiveColor] = useState('#ff0000');
+  const [specialEmissiveInt, setSpecialEmissiveInt] = useState(0.2);
+  const [specialGradient1, setSpecialGradient1] = useState('#fcffd6');
+  const [specialGradient2, setSpecialGradient2] = useState('#fff04d');
+  const [specialGradient3, setSpecialGradient3] = useState('#ff7b00');
+  
   // 薄膜几何数据（用于 getFilmSurface 插值）
   const filmDataRef = useRef<FilmGeometryData | null>(null);
   const filmMeshRef = useRef<THREE.Mesh>(null);
   const [filmRev, setFilmRev] = useState(0);
+
+  // === 动态特殊气泡管理 ===
+  // 戳破时一次判定：若该气泡将变为特殊，则加入 pending；恢复完成时 pending → special
+  const deflatedRef = useRef<Set<number>>(new Set());
+  const initialSpecial = useMemo(() => {
+    const idx = Math.floor(Math.random() * BUBBLE_POSITIONS.length);
+    return new Set([idx]);
+  }, []);
+  const specialRef = useRef<Set<number>>(initialSpecial);
+  const [specialSet, setSpecialSet] = useState<Set<number>>(() => initialSpecial);
+  const pendingSpecialRef = useRef<Set<number>>(new Set());
+  const [pendingSpecialSet, setPendingSpecialSet] = useState<Set<number>>(new Set());
+  // pendingRemove: 特殊气泡爆破后将变为普通
+  const pendingRemoveSpecialRef = useRef<Set<number>>(new Set());
+  const [pendingRemoveSet, setPendingRemoveSet] = useState<Set<number>>(new Set());
+
+  const handleBubbleDeflate = useCallback((index: number) => {
+    deflatedRef.current.add(index);
+
+    if (specialRef.current.has(index)) {
+      // 特殊气泡被戳破：同样做随机判定
+      if (specialRef.current.size + pendingSpecialRef.current.size <= 5 && Math.random() < 0.4) {
+        // 保持特殊，不做任何变化
+      } else {
+        // 将变为普通：标记 pendingRemove，瓦片保持 color='red' 直到 recover
+        pendingRemoveSpecialRef.current.add(index);
+        setPendingRemoveSet(new Set(pendingRemoveSpecialRef.current));
+      }
+      return;
+    }
+
+    // 普通气泡：判定是否将变为特殊
+    if (specialRef.current.size + pendingSpecialRef.current.size < 5) {
+      if (Math.random() < 0.4) {
+        pendingSpecialRef.current.add(index);
+        setPendingSpecialSet(new Set(pendingSpecialRef.current));
+      }
+    }
+  }, []);
+
+  const handleBubbleRecover = useCallback((index: number) => {
+    deflatedRef.current.delete(index);
+    // 特殊→普通：恢复后移除特殊状态
+    if (pendingRemoveSpecialRef.current.has(index)) {
+      pendingRemoveSpecialRef.current.delete(index);
+      setPendingRemoveSet(new Set(pendingRemoveSpecialRef.current));
+      specialRef.current.delete(index);
+      setSpecialSet(new Set(specialRef.current));
+      return;
+    }
+    // 普通→特殊：pending 提升为 special
+    if (pendingSpecialRef.current.has(index)) {
+      pendingSpecialRef.current.delete(index);
+      setPendingSpecialSet(new Set(pendingSpecialRef.current));
+      specialRef.current.add(index);
+      setSpecialSet(new Set(specialRef.current));
+    }
+  }, []);
 
   const handleGeometryReady = useCallback<GeometryReadyFn>(
     (positions, width, height, segX, segZ) => {
@@ -419,19 +509,93 @@ export default function App() {
   }, [filmRev, getFilmSurface]);
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div className="app-container" style={{ position: 'relative', flexShrink: 0, overflow: 'hidden' }}>
+      {/* 背景装饰层 */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        pointerEvents: 'none',
+        zIndex: 0,
+      }}>
+        {/* 左上角白色方块 */}
+        <div style={{
+          position: 'absolute',
+          left: '8%',
+          top: 0,
+          width: '15%',
+          height: '10%',
+          background: '#ffffff',
+        }} />
+        {/* 左侧中间竖条白色渐变 */}
+        <div style={{
+          position: 'absolute',
+          left: '15%',
+          top: '42%',
+          width: '8%',
+          height: '28%',
+          background: 'linear-gradient(to bottom, #ffffff, transparent)',
+        }} />
+        {/* 右下角橙色渐变方块 */}
+        <div style={{
+          position: 'absolute',
+          right: '8%',
+          bottom: '3%',
+          width: '12%',
+          height: '15%',
+          background: 'linear-gradient(to bottom, #F5BC67, rgba(245,188,103,0))',
+        }} />
+        {/* "Air Bubble Film" 标题 */}
+        <div style={{
+          position: 'absolute',
+          left: '8%',
+          top: '15%',
+          fontFamily: '"Toppan Bunkyu Midashi Mincho", serif',
+          fontWeight: 800,
+          color: '#574373',
+          fontSize: '8vw',
+          lineHeight: 1.05,
+        }}>
+          Air<br />Bubble<br />Film
+        </div>
+        {/* "V 0.1.0" */}
+        <div style={{
+          position: 'absolute',
+          right: '10%',
+          top: '18%',
+          fontFamily: '"Helvetica Neue", Arial, sans-serif',
+          fontWeight: 300,
+          color: '#999999',
+          fontSize: '1.2vw',
+        }}>
+          V 0.1.0
+        </div>
+        {/* "Powered by GET" + "via Opus 4.6" */}
+        <div style={{
+          position: 'absolute',
+          left: '8%',
+          bottom: '8%',
+          fontFamily: '"Helvetica Neue", Arial, sans-serif',
+          fontWeight: 300,
+          color: '#574373',
+          fontSize: '1.2vw',
+          lineHeight: 1.6,
+        }}>
+          Powered by GET<br />via Opus 4.6
+        </div>
+      </div>
+
       <Canvas
         shadows
         orthographic
         camera={{
           position: [5, 7, 5],
-          zoom: 55,
+          zoom: 45,
           near: 0.1,
           far: 100,
         }}
-        style={{ background: '#f5f0eb' }}
+        style={{ position: 'absolute', inset: 0, zIndex: 1 }}
         dpr={[1, 2]}
-        gl={{ antialias: true }}
+        gl={{ antialias: true, alpha: true }}
       >
         <ExposureController exposure={exposure} />
         <ambientLight intensity={ambientIntensity} color="#fff8f0" />
@@ -456,17 +620,23 @@ export default function App() {
           matOpacity={matOpacity}
           matAttenuationColor={matAttenuationColor}
           wrinkleAmp={filmWrinkleAmp}
+          gradientColors={[gradient1, gradient2, gradient3]}
+          gradientRotation={filmGradientRotation}
           meshRef={filmMeshRef}
           onGeometryReady={handleGeometryReady}
         />
 
         {/* 8x8 气泡网格，依附于薄膜表面 */}
         {bubblePlacements.map((p, i) => {
-          const isRed = i === 28;
+          const isSpecial = specialSet.has(i);
+          // 个别气泡Y轴偏移修正
+          const yOffsets: Record<number, number> = {1:0.2,2:0.2,9:0.2,26:0.2,0:0.1,4:0.1,8:0.1,16:0.1,17:0.1,18:0.1,24:0.1,27:0.1,28:0.1,35:0.1,42:0.1,57:0.1};
+          const yOff = yOffsets[i] || 0;
+          const pos: [number, number, number] = [p.position[0], p.position[1] + yOff, p.position[2]];
           return (
+            <group key={`group-${i}`}>
             <Bubble
-              key={`${i}-${bubbleWrinkleAmp}`}
-              position={p.position}
+              position={pos}
               rotation={p.rotation}
               radius={BUBBLE_RADIUS}
               seed={i}
@@ -478,8 +648,17 @@ export default function App() {
               reboundSpringK={springK}
               reboundDamping={damping}
               reboundKick={kick}
-              color={isRed ? 'red' : 'default'}
-              longPress={isRed}
+              color={isSpecial ? 'red' : 'default'}
+              longPress={isSpecial}
+              willBeSpecial={pendingSpecialSet.has(i)}
+              willBeNormal={pendingRemoveSet.has(i)}
+              onDeflate={() => handleBubbleDeflate(i)}
+              onRecover={() => handleBubbleRecover(i)}
+              specialAttenuationColor={specialAttenuationColor}
+              specialEmissiveColor={specialEmissiveColor}
+              specialEmissiveInt={specialEmissiveInt}
+              specialGradient={[specialGradient1, specialGradient2, specialGradient3]}
+              gradient={[gradient1, gradient2, gradient3]}
               envMapIntensity={envIntensity}
               emissiveColor={emissiveColor}
               emissiveInt={emissiveIntensity}
@@ -490,7 +669,9 @@ export default function App() {
               matOpacity={matOpacity}
               matAttenuationColor={matAttenuationColor}
               bubbleWrinkleAmp={bubbleWrinkleAmp}
+              debugFlat={debugFlat}
             />
+            </group>
           );
         })}
 
@@ -518,7 +699,7 @@ export default function App() {
 
       {/* 左侧材质面板 */}
       <div style={{
-        position: 'absolute', bottom: 20, left: 20,
+        position: 'absolute', bottom: 20, left: 20, zIndex: 10, display: 'none',
         background: 'rgba(255,255,255,0.9)', borderRadius: 8,
         padding: '12px 16px', fontSize: 12, fontFamily: 'monospace',
         boxShadow: '0 2px 8px rgba(0,0,0,0.1)', minWidth: 180,
@@ -567,6 +748,46 @@ export default function App() {
             style={{ verticalAlign: 'middle' }} />
         </div>
         <div style={{ marginTop: 8, borderTop: '1px solid #eee', paddingTop: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6, color: '#666' }}>特殊气泡</div>
+          <div style={{ marginBottom: 4 }}>
+            <label>衰减色: </label>
+            <input type="color" value={specialAttenuationColor}
+              onChange={e => setSpecialAttenuationColor(e.target.value)}
+              style={{ verticalAlign: 'middle' }} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <label>自发光颜色: </label>
+            <input type="color" value={specialEmissiveColor}
+              onChange={e => setSpecialEmissiveColor(e.target.value)}
+              style={{ verticalAlign: 'middle' }} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <label>自发光强度: {specialEmissiveInt.toFixed(2)}</label><br/>
+            <input type="range" min="0" max="2" step="0.1"
+              value={specialEmissiveInt}
+              onChange={e => setSpecialEmissiveInt(+e.target.value)}
+              style={{ width: 160 }} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <label>渐变色1: </label>
+            <input type="color" value={specialGradient1}
+              onChange={e => setSpecialGradient1(e.target.value)}
+              style={{ verticalAlign: 'middle' }} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <label>渐变色2: </label>
+            <input type="color" value={specialGradient2}
+              onChange={e => setSpecialGradient2(e.target.value)}
+              style={{ verticalAlign: 'middle' }} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <label>渐变色3: </label>
+            <input type="color" value={specialGradient3}
+              onChange={e => setSpecialGradient3(e.target.value)}
+              style={{ verticalAlign: 'middle' }} />
+          </div>
+        </div>
+        <div style={{ marginTop: 8, borderTop: '1px solid #eee', paddingTop: 8 }}>
           <div style={{ fontWeight: 600, marginBottom: 6, color: '#666' }}>自发光</div>
           <div style={{ marginBottom: 4 }}>
             <label>颜色: </label>
@@ -583,7 +804,35 @@ export default function App() {
           </div>
         </div>
         <div style={{ marginTop: 8, borderTop: '1px solid #eee', paddingTop: 8 }}>
-          <div style={{ fontWeight: 600, marginBottom: 6, color: '#666' }}>褶皱</div>
+          <div style={{ fontWeight: 600, marginBottom: 6, color: '#666' }}>渐变色</div>
+          <div style={{ marginBottom: 4 }}>
+            <label>色1: </label>
+            <input type="color" value={gradient1}
+              onChange={e => setGradient1(e.target.value)}
+              style={{ verticalAlign: 'middle' }} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <label>色2: </label>
+            <input type="color" value={gradient2}
+              onChange={e => setGradient2(e.target.value)}
+              style={{ verticalAlign: 'middle' }} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <label>色3: </label>
+            <input type="color" value={gradient3}
+              onChange={e => setGradient3(e.target.value)}
+              style={{ verticalAlign: 'middle' }} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            <label>薄膜渐变方向: {(filmGradientRotation * 180 / Math.PI).toFixed(0)}°</label><br/>
+            <input type="range" min="0" max="6.283" step="0.1"
+              value={filmGradientRotation}
+              onChange={e => setFilmGradientRotation(+e.target.value)}
+              style={{ width: 160 }} />
+          </div>
+        </div>
+        <div style={{ marginTop: 8, borderTop: '1px solid #eee', paddingTop: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6, color: '#666' }}>褒皱</div>
           <div style={{ marginBottom: 4 }}>
             <label>气泡褶皱: {bubbleWrinkleAmp.toFixed(2)}</label><br/>
             <input type="range" min="0" max="3" step="0.05"
@@ -664,12 +913,19 @@ export default function App() {
 
       {/* 调试面板（右下角） */}
       <div style={{
-        position: 'absolute', bottom: 20, right: 20,
+        position: 'absolute', bottom: 20, right: 20, zIndex: 10, display: 'none',
         background: 'rgba(255,255,255,0.9)', borderRadius: 8,
         padding: '12px 16px', fontSize: 12, fontFamily: 'monospace',
         boxShadow: '0 2px 8px rgba(0,0,0,0.1)', minWidth: 180,
         maxHeight: '80vh', overflowY: 'auto'
       }}>
+        {/* 调试开关 */}
+        <div style={{ marginBottom: 8 }}>
+          <label>
+            <input type="checkbox" checked={debugFlat} onChange={e => setDebugFlat(e.target.checked)} />
+            {' '}全部扁平（调试）
+          </label>
+        </div>
         {/* 薄膜姿态部分——隐藏 */}
         {false && <>
         <div style={{ fontWeight: 600, marginBottom: 8, color: '#666' }}>薄膜姿态</div>

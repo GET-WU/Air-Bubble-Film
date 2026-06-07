@@ -25,8 +25,17 @@ interface BubbleProps {
   seed?: number;            // 随机种子，让每个气泡褶纹不同
   wrinkleInfluence?: number; // 褶纹影响度（0~1，控制proximity对褶纹的衰减强度）
   color?: 'default' | 'red'; // 气泡颜色
+  willBeSpecial?: boolean;   // 处于 deflated 时将过渡为特殊气泡
+  willBeNormal?: boolean;    // 处于 deflated 时将过渡为普通气泡
+  specialAttenuationColor?: string; // 特殊气泡衰减色
+  specialEmissiveColor?: string;    // 特殊气泡自发光颜色
+  specialEmissiveInt?: number;      // 特殊气泡自发光强度
+  specialGradient?: [string, string, string]; // 特殊气泡渐变色
+  gradient?: [string, string, string]; // 普通气泡渐变色
   longPress?: boolean;       // 是否启用长按戳破模式
   longPressDuration?: number; // 长按所需时长(ms)
+  onDeflate?: () => void;     // 气泡开始瘪时回调
+  onRecover?: () => void;     // 气泡恢复完成时回调
   envMapIntensity?: number;   // 环境贴图强度
   emissiveColor?: string;     // 自发光颜色
   emissiveInt?: number;       // 自发光强度
@@ -36,16 +45,23 @@ interface BubbleProps {
   matThickness?: number;
   matOpacity?: number;
   matAttenuationColor?: string;
-  bubbleWrinkleAmp?: number; // 气泡褶皱强度倍率
+  bubbleWrinkleAmp?: number; // 气泡褒皱强度倍率
+  debugFlat?: boolean; // 调试：强制扁平
 }
 
-export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1, tractionStrength = 0.35, tractionRadius = 3.0, cylinderHeight: cylH = 0.8, domeHeight: domeH = 0.6, reboundSpringK = 120, reboundDamping = 4, reboundKick = 40, seed = 0, wrinkleInfluence = 1.0, color = 'default', longPress = false, longPressDuration = 1000, envMapIntensity = 0.6, emissiveColor = '#ff9300', emissiveInt = 0.3, matTransmission = 0.65, matRoughness = 0.4, matIor = 1.5, matThickness = 1.8, matOpacity = 0.95, matAttenuationColor = '#ffcc77', bubbleWrinkleAmp = 1.0 }: BubbleProps) {
+export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1, tractionStrength = 0.35, tractionRadius = 3.0, cylinderHeight: cylH = 0.8, domeHeight: domeH = 0.6, reboundSpringK = 120, reboundDamping = 4, reboundKick = 40, seed = 0, wrinkleInfluence = 1.0, color = 'default', willBeSpecial = false, willBeNormal = false, longPress = false, longPressDuration = 1000, onDeflate, onRecover, specialAttenuationColor = '#ff4444', specialEmissiveColor = '#ff4444', specialEmissiveInt = 0.5, specialGradient = ['#f8b8b8', '#ff6666', '#d84848'], gradient = ['#b8d8f8', '#ffeaa0', '#d4eab8'], envMapIntensity = 0.6, emissiveColor = '#ff9300', emissiveInt = 0.3, matTransmission = 0.65, matRoughness = 0.4, matIor = 1.5, matThickness = 1.8, matOpacity = 0.95, matAttenuationColor = '#ffcc77', bubbleWrinkleAmp = 1.0, debugFlat = false }: BubbleProps) {
   const groupRef = useRef<THREE.Group>(null);
   const domeRef = useRef<THREE.Mesh>(null);
   const capRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.MeshPhysicalMaterial>(null);
   const phaseRef = useRef<Phase>('idle');
   const elapsedRef = useRef(0);
+  const colorTransitionRef = useRef(0); // 0=普通 1=特殊
+  const [lerpGradient, setLerpGradient] = useState<[string, string, string] | null>(null);
   const [hovered, setHovered] = useState(false);
+  // 颜色插值复用对象，避免每帧分配
+  const tmpColorA = useRef(new THREE.Color());
+  const tmpColorB = useRef(new THREE.Color());
 
   // --- Mouse traction deformation ---
   const smoothMousePos = useRef(new THREE.Vector3(0, -999, 0));
@@ -256,6 +272,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
     phaseRef.current = 'deflating';
     elapsedRef.current = 0;
     audioManager.play();
+    onDeflate?.();
   };
 
   // 滑动戳破：鼠标按下状态下划入气泡触发戳破或长按
@@ -274,6 +291,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
       elapsedRef.current = 0;
       hoverScaleY.current = 1.2 / cylH; // 设置hover拉高状态，恢复后产生弹性回落
       audioManager.play();
+      onDeflate?.();
     }
   };
 
@@ -308,7 +326,71 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
     const cap = capRef.current;
     if (!g || !dome || !cap) return;
 
+    // 调试模式：强制扁平
+    if (debugFlat) {
+      if (phaseRef.current === 'idle') {
+        phaseRef.current = 'deflated';
+      }
+      if (phaseRef.current === 'deflated') {
+        elapsedRef.current = 0; // 持续重置，永远不进入 recovering
+      }
+    } else if (!debugFlat && phaseRef.current === 'deflated' && elapsedRef.current >= DEFLATED_HOLD_MS) {
+      phaseRef.current = 'recovering';
+      elapsedRef.current = 0;
+    }
+
     const phase = phaseRef.current;
+
+    // === 颜色预告渐变：将变为特殊气泡的预告色过渡 ===
+    // 计算颜色过渡进度并直接设置材质属性（绕过JSX props覆盖问题）
+    if (matRef.current) {
+      if (willBeSpecial && color !== 'red') {
+        // 普通→特殊 过渡
+        let ct = colorTransitionRef.current;
+        if (phase === 'deflated') {
+          ct = Math.min(elapsedRef.current / DEFLATED_HOLD_MS, 1);
+        } else if (phase === 'recovering' || phase === 'idle') {
+          ct = 1;
+        }
+        colorTransitionRef.current = ct;
+        tmpColorA.current.set(matAttenuationColor).lerp(tmpColorB.current.set(specialAttenuationColor), ct);
+        matRef.current.attenuationColor.copy(tmpColorA.current);
+        tmpColorA.current.set(emissiveColor).lerp(tmpColorB.current.set(specialEmissiveColor), ct);
+        matRef.current.emissive.copy(tmpColorA.current);
+        matRef.current.emissiveIntensity = emissiveInt + (specialEmissiveInt - emissiveInt) * ct;
+        const c1 = new THREE.Color(gradient[0]).lerp(new THREE.Color(specialGradient[0]), ct);
+        const c2 = new THREE.Color(gradient[1]).lerp(new THREE.Color(specialGradient[1]), ct);
+        const c3 = new THREE.Color(gradient[2]).lerp(new THREE.Color(specialGradient[2]), ct);
+        setLerpGradient(['#' + c1.getHexString(), '#' + c2.getHexString(), '#' + c3.getHexString()]);
+      } else if (willBeNormal && color === 'red') {
+        // 特殊→普通 过渡（反向）
+        let ct = colorTransitionRef.current;
+        if (phase === 'deflated') {
+          ct = Math.min(elapsedRef.current / DEFLATED_HOLD_MS, 1);
+        } else if (phase === 'recovering' || phase === 'idle') {
+          ct = 1;
+        }
+        colorTransitionRef.current = ct;
+        tmpColorA.current.set(specialAttenuationColor).lerp(tmpColorB.current.set(matAttenuationColor), ct);
+        matRef.current.attenuationColor.copy(tmpColorA.current);
+        tmpColorA.current.set(specialEmissiveColor).lerp(tmpColorB.current.set(emissiveColor), ct);
+        matRef.current.emissive.copy(tmpColorA.current);
+        matRef.current.emissiveIntensity = specialEmissiveInt + (emissiveInt - specialEmissiveInt) * ct;
+        const c1 = new THREE.Color(specialGradient[0]).lerp(new THREE.Color(gradient[0]), ct);
+        const c2 = new THREE.Color(specialGradient[1]).lerp(new THREE.Color(gradient[1]), ct);
+        const c3 = new THREE.Color(specialGradient[2]).lerp(new THREE.Color(gradient[2]), ct);
+        setLerpGradient(['#' + c1.getHexString(), '#' + c2.getHexString(), '#' + c3.getHexString()]);
+      } else if (color === 'red') {
+        matRef.current.attenuationColor.set(specialAttenuationColor);
+        matRef.current.emissive.set(specialEmissiveColor);
+        matRef.current.emissiveIntensity = specialEmissiveInt;
+        colorTransitionRef.current = 0;
+        if (!lerpGradient || lerpGradient[0] !== specialGradient[0]) setLerpGradient([...specialGradient] as [string, string, string]);
+      } else {
+        if (lerpGradient !== null) setLerpGradient(null);
+        colorTransitionRef.current = 0;
+      }
+    }
 
     // === 长按戳破：挤压变形 + 抖动反馈 ===
     if (longPress) {
@@ -351,6 +433,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
           squeezeCtrlRef.current = null;
           g.position.x = 0;
           g.position.z = 0;
+          onDeflate?.();
         }
         return;
       } else if (!isPressing.current && phase === 'idle' && originalPositions.current) {
@@ -665,7 +748,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
       } else if (phase === 'deflated' && t >= DEFLATED_HOLD_MS) {
         phaseRef.current = 'recovering';
         elapsedRef.current = 0;
-        setTimeout(() => audioManager.playRecover(), 400);
+        setTimeout(() => audioManager.playRecover(willBeSpecial), 150);
       } else if (phase === 'recovering' && t >= RECOVER_MS) {
         phaseRef.current = 'idle';
         elapsedRef.current = 0;
@@ -679,6 +762,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
         velocityX.current = 0;
         velocityZ.current = 0;
         isRebounding.current = false;
+        onRecover?.();
       }
       return;
     }
@@ -747,6 +831,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
           }}
         >
           <meshPhysicalMaterial
+            ref={matRef}
             transmission={matTransmission}
             thickness={matThickness}
             roughness={matRoughness}
@@ -760,16 +845,16 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
             transparent
             opacity={matOpacity}
             side={THREE.DoubleSide}
-            attenuationColor={color === 'red' ? '#ff4444' : matAttenuationColor}
+            attenuationColor={color === 'red' ? specialAttenuationColor : matAttenuationColor}
             attenuationDistance={0.8}
             envMapIntensity={envMapIntensity}
-            emissive={color === 'red' ? '#ff4444' : emissiveColor}
-            emissiveIntensity={emissiveInt}
+            emissive={color === 'red' ? specialEmissiveColor : emissiveColor}
+            emissiveIntensity={color === 'red' ? specialEmissiveInt : emissiveInt}
           >
             <GradientTexture
               attach="map"
               stops={[0, 0.4, 1]}
-              colors={color === 'red' ? ['#f8b8b8', '#ff6666', '#d84848'] : ['#b8d8f8', '#ffeaa0', '#d4eab8']}
+              colors={lerpGradient || gradient}
             />
           </meshPhysicalMaterial>
         </mesh>
