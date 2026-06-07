@@ -34,8 +34,9 @@ interface BubbleProps {
   gradient?: [string, string, string]; // 普通气泡渐变色
   longPress?: boolean;       // 是否启用长按戳破模式
   longPressDuration?: number; // 长按所需时长(ms)
-  onDeflate?: () => void;     // 气泡开始瘪时回调
+  onDeflate?: () => void;     // 气泡开始瘡时回调
   onRecover?: () => void;     // 气泡恢复完成时回调
+  globalPressingRef?: React.MutableRefObject<number>; // 全局长按进度共享(0=未按, 0~1=按压进度)
   envMapIntensity?: number;   // 环境贴图强度
   emissiveColor?: string;     // 自发光颜色
   emissiveInt?: number;       // 自发光强度
@@ -49,7 +50,7 @@ interface BubbleProps {
   debugFlat?: boolean; // 调试：强制扁平
 }
 
-export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1, tractionStrength = 0.35, tractionRadius = 3.0, cylinderHeight: cylH = 0.8, domeHeight: domeH = 0.6, reboundSpringK = 120, reboundDamping = 4, reboundKick = 40, seed = 0, wrinkleInfluence = 1.0, color = 'default', willBeSpecial = false, willBeNormal = false, longPress = false, longPressDuration = 1000, onDeflate, onRecover, specialAttenuationColor = '#ff4444', specialEmissiveColor = '#ff4444', specialEmissiveInt = 0.5, specialGradient = ['#f8b8b8', '#ff6666', '#d84848'], gradient = ['#b8d8f8', '#ffeaa0', '#d4eab8'], envMapIntensity = 0.6, emissiveColor = '#ff9300', emissiveInt = 0.3, matTransmission = 0.65, matRoughness = 0.4, matIor = 1.5, matThickness = 1.8, matOpacity = 0.95, matAttenuationColor = '#ffcc77', bubbleWrinkleAmp = 1.0, debugFlat = false }: BubbleProps) {
+export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1, tractionStrength = 0.35, tractionRadius = 3.0, cylinderHeight: cylH = 0.8, domeHeight: domeH = 0.6, reboundSpringK = 120, reboundDamping = 4, reboundKick = 40, seed = 0, wrinkleInfluence = 1.0, color = 'default', willBeSpecial = false, willBeNormal = false, longPress = false, longPressDuration = 1000, onDeflate, onRecover, globalPressingRef, specialAttenuationColor = '#ff4444', specialEmissiveColor = '#ff4444', specialEmissiveInt = 0.5, specialGradient = ['#f8b8b8', '#ff6666', '#d84848'], gradient = ['#b8d8f8', '#ffeaa0', '#d4eab8'], envMapIntensity = 0.6, emissiveColor = '#ff9300', emissiveInt = 0.3, matTransmission = 0.65, matRoughness = 0.4, matIor = 1.5, matThickness = 1.8, matOpacity = 0.95, matAttenuationColor = '#ffcc77', bubbleWrinkleAmp = 1.0, debugFlat = false }: BubbleProps) {
   const groupRef = useRef<THREE.Group>(null);
   const domeRef = useRef<THREE.Mesh>(null);
   const capRef = useRef<THREE.Mesh>(null);
@@ -78,6 +79,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
   const isRebounding = useRef(false);
   // 长按戳破状态
   const isPressing = useRef(false);
+  const ownsGlobalShake = useRef(false); // 本气泡是否在控制全局抖动
   const pressStartTime = useRef(0);
   const squeezeCtrlRef = useRef<{ stop: () => void } | null>(null);
   // 投影平面设在气泡顶部高度，45°等距视角下视觉位置与XZ坐标正确对应
@@ -397,6 +399,11 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
       if (isPressing.current && phase === 'idle') {
         const now = performance.now();
         const pressProgress = Math.min(1, (now - pressStartTime.current) / longPressDuration);
+        // 同步长按进度到全局ref
+        if (globalPressingRef) {
+          globalPressingRef.current = pressProgress;
+          ownsGlobalShake.current = true;
+        }
         // 逐顶点挤压：底部不动，中部最胖，顶部收回——形成馒头/水滴形
         if (originalPositions.current) {
           const posAttr = domeGeometry.attributes.position;
@@ -425,11 +432,11 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
         g.position.z = Math.cos(now * 0.1) * shakeAmp;
     
         if (pressProgress >= 1) {
-          // 达阈：触发 deflating，重置（不播 pop 音效，挤压音效自然播完）
+          // 达阈：触发 deflating
           phaseRef.current = 'deflating';
           elapsedRef.current = 0;
           isPressing.current = false;
-          // 爆破时不停止挤压音效，让其自然播完
+          // 不立即重置 globalPressingRef，让 IntroController 的淡出机制处理延缓结束
           squeezeCtrlRef.current = null;
           g.position.x = 0;
           g.position.z = 0;
@@ -437,6 +444,11 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
         }
         return;
       } else if (!isPressing.current && phase === 'idle' && originalPositions.current) {
+        // 松手时仅当本气泡拥有全局抖动控制权时才重置
+        if (ownsGlobalShake.current && globalPressingRef) {
+          globalPressingRef.current = 0;
+          ownsGlobalShake.current = false;
+        }
         // 松手后弹性恢复原始形态
         const posAttr = domeGeometry.attributes.position;
         const orig = originalPositions.current;
@@ -457,6 +469,11 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
         // 抖动位置恢复
         g.position.x += (0 - g.position.x) * Math.min(1, dt * 10);
         g.position.z += (0 - g.position.z) * Math.min(1, dt * 10);
+      }
+      // 爆破后（phase不再是 idle）且本气泡拥有抖动控制权，释放控制权
+      if (phase !== 'idle' && ownsGlobalShake.current) {
+        if (globalPressingRef) globalPressingRef.current = 0;
+        ownsGlobalShake.current = false;
       }
     }
 

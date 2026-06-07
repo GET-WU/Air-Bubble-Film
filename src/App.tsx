@@ -3,6 +3,7 @@ import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { Environment, GradientTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { Bubble } from './Bubble';
+import { audioManager } from './AudioManager';
 
 // 薄膜与气泡阵列共享常量
 const FILM_WIDTH = 8.4;
@@ -13,6 +14,27 @@ const FILM_Y_OFFSET = -0.01; // 薄膜 mesh 相对世界原点的 Y 偏移
 const BUBBLE_RADIUS = 0.4;
 const BUBBLE_BASE_RADIUS = BUBBLE_RADIUS * 1.2; // 气泡底部半径
 const BUBBLE_SPACING = 0.96;
+
+// 背景装饰模板配置（百分比值，以1:1画布为基准）—— 作为 state 初始值
+const INITIAL_BG_LAYOUT = {
+  whiteBlock: { left: 16.5, top: 0, width: 11, height: 10 },
+  verticalBar: { left: 16.5, top: 46, width: 15, height: 28 },
+  gradientBlock: { right: 16.5, bottom: 1.5, width: 11, height: 15 },
+  title: { left: 15.5, top: 15, fontSize: 8 },
+  version: { right: 16.5, top: 15, fontSize: 1.4 },
+  credits: { left: 16.5, bottom: 16.5, fontSize: 1.4 },
+};
+
+const SMALL_BG_LAYOUT = {
+  whiteBlock: { left: 6, top: 0, width: 19.5, height: 10 },
+  verticalBar: { left: 6, top: 46, width: 19.5, height: 36 },
+  gradientBlock: { right: 6, bottom: 2, width: 24, height: 28 },
+  title: { left: 5.5, top: 12, fontSize: 18.5 },
+  version: { right: 6, top: 12, fontSize: 3 },
+  credits: { left: 6.5, bottom: 8, fontSize: 3 },
+};
+type BgLayout = typeof INITIAL_BG_LAYOUT;
+type BgGroup = keyof BgLayout;
 
 // 8x8 阵列的所有气泡 (x,z) 中心坐标
 const BUBBLE_POSITIONS: Array<[number, number]> = (() => {
@@ -277,6 +299,74 @@ function MouseLight({ filmMeshRef, intensity, color, heightOffset, distance, dec
   return <pointLight ref={lightRef} color={color} intensity={intensity} distance={distance} decay={decay} />;
 }
 
+function IntroController({ loaded, groupRef, pressingRef }: { loaded: boolean; groupRef: React.RefObject<THREE.Group>; pressingRef: React.MutableRefObject<number> }) {
+  const started = useRef(false);
+  const startTime = useRef(0);
+  const shakeStartTime = useRef(0); // 抖动开始时间
+  const shakeStopTime = useRef(0);  // 抖动停止时间
+  const lastProgress = useRef(0);   // 上一帧的progress
+  const INTRO_OFFSET_Y = -1.0;
+  const INTRO_DURATION = 500;
+  const SHAKE_DELAY = 400; // 延迟0.4秒
+
+  useFrame(() => {
+    if (!groupRef.current) return;
+    if (!loaded) {
+      groupRef.current.position.y = INTRO_OFFSET_Y;
+      return;
+    }
+    if (!started.current) {
+      started.current = true;
+      startTime.current = performance.now();
+    }
+    const elapsed = performance.now() - startTime.current;
+    const t = Math.min(elapsed / INTRO_DURATION, 1);
+    const eased = 1 - Math.pow(1 - t, 5);
+    let baseY = INTRO_OFFSET_Y * (1 - eased);
+
+    const now = performance.now();
+    const progress = pressingRef.current;
+
+    // 记录抖动开始/停止时间
+    if (progress > 0 && lastProgress.current === 0) {
+      shakeStartTime.current = now; // 开始按压
+    }
+    if (progress === 0 && lastProgress.current > 0) {
+      shakeStopTime.current = now; // 松手
+    }
+    lastProgress.current = progress;
+
+    // 计算抖动强度：延迟开始，延迟结束
+    let shakeIntensity = 0;
+    if (progress > 0) {
+      // 正在按压：延迟0.2s后才开始
+      const pressingElapsed = now - shakeStartTime.current;
+      if (pressingElapsed > SHAKE_DELAY) {
+        shakeIntensity = progress;
+      }
+    } else if (shakeStopTime.current > 0) {
+      // 已松手：继续抖0.2s后才停
+      const fadeElapsed = now - shakeStopTime.current;
+      if (fadeElapsed < SHAKE_DELAY) {
+        shakeIntensity = lastProgress.current * (1 - fadeElapsed / SHAKE_DELAY);
+      }
+    }
+
+    if (shakeIntensity > 0 && t >= 1) {
+      const amp = shakeIntensity * 0.03;
+      const freq = shakeIntensity * 0.07;
+      baseY += Math.sin(now * freq) * amp;
+      groupRef.current.position.x = Math.cos(now * freq * 1.4) * amp;
+      groupRef.current.position.z = Math.sin(now * freq * 1.2 + 1.3) * amp * 0.7;
+    } else {
+      groupRef.current.position.x = 0;
+      groupRef.current.position.z = 0;
+    }
+    groupRef.current.position.y = baseY;
+  });
+  return null;
+}
+
 function CameraController({ azimuth }: { azimuth: number }) {
   const { camera, size } = useThree();
   useFrame(() => {
@@ -371,11 +461,59 @@ export default function App() {
   const [specialGradient1, setSpecialGradient1] = useState('#fcffd6');
   const [specialGradient2, setSpecialGradient2] = useState('#fff04d');
   const [specialGradient3, setSpecialGradient3] = useState('#ff7b00');
-  
+
+  // 背景装饰布局（state 化，支持运行时调节）
+  const [bgLayout, setBgLayout] = useState<BgLayout>(
+    () => Math.min(window.innerWidth, window.innerHeight) >= 670 ? INITIAL_BG_LAYOUT : SMALL_BG_LAYOUT
+  );
+  const [bgPanelOpen, setBgPanelOpen] = useState(false);
+
+  // 窗口大小变化时切换布局
+  useEffect(() => {
+    const onResize = () => {
+      const vmin = Math.min(window.innerWidth, window.innerHeight);
+      setBgLayout(vmin >= 670 ? INITIAL_BG_LAYOUT : SMALL_BG_LAYOUT);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const updateBgField = useCallback(
+    <G extends BgGroup, K extends keyof BgLayout[G]>(group: G, key: K, value: number) => {
+      setBgLayout((prev) => ({
+        ...prev,
+        [group]: { ...prev[group], [key]: value },
+      }));
+    },
+    [],
+  );
+
   // 薄膜几何数据（用于 getFilmSurface 插值）
   const filmDataRef = useRef<FilmGeometryData | null>(null);
   const filmMeshRef = useRef<THREE.Mesh>(null);
   const [filmRev, setFilmRev] = useState(0);
+
+  // 开场动画状态
+  const [sceneLoaded, setSceneLoaded] = useState(false);
+  const [introPlaying, setIntroPlaying] = useState(true);
+  const introGroupRef = useRef<THREE.Group>(null);
+  const [maskMounted, setMaskMounted] = useState(true);
+  const globalPressingRef = useRef(0);
+
+  // 加载完成后触发遮罩渐隐
+  useEffect(() => {
+    if (!sceneLoaded) return;
+    setIntroPlaying(false);
+    const timer = setTimeout(() => setMaskMounted(false), 550);
+    return () => clearTimeout(timer);
+  }, [sceneLoaded]);
+
+  // 背景音乐自动播放（页面加载即尝试，首次交互时补resume）
+  useEffect(() => {
+    audioManager.startBGM();
+    const resumeBGM = () => { audioManager.startBGM(); document.removeEventListener('click', resumeBGM); document.removeEventListener('touchstart', resumeBGM); };
+    document.addEventListener('click', resumeBGM, { once: true });
+    document.addEventListener('touchstart', resumeBGM, { once: true });
+  }, []);
 
   // === 动态特殊气泡管理 ===
   // 戳破时一次判定：若该气泡将变为特殊，则加入 pending；恢复完成时 pending → special
@@ -439,6 +577,7 @@ export default function App() {
     (positions, width, height, segX, segZ) => {
       filmDataRef.current = { positions, width, height, segX, segZ };
       setFilmRev((r) => r + 1);
+      setSceneLoaded(true);
     },
     [],
   );
@@ -520,39 +659,39 @@ export default function App() {
         {/* 左上角白色方块 */}
         <div style={{
           position: 'absolute',
-          left: '8%',
-          top: 0,
-          width: '15%',
-          height: '10%',
+          left: `${bgLayout.whiteBlock.left}%`,
+          top: `${bgLayout.whiteBlock.top}%`,
+          width: `${bgLayout.whiteBlock.width}%`,
+          height: `${bgLayout.whiteBlock.height}%`,
           background: '#ffffff',
         }} />
         {/* 左侧中间竖条白色渐变 */}
         <div style={{
           position: 'absolute',
-          left: '15%',
-          top: '42%',
-          width: '8%',
-          height: '28%',
+          left: `${bgLayout.verticalBar.left}%`,
+          top: `${bgLayout.verticalBar.top}%`,
+          width: `${bgLayout.verticalBar.width}%`,
+          height: `${bgLayout.verticalBar.height}%`,
           background: 'linear-gradient(to bottom, #ffffff, transparent)',
         }} />
         {/* 右下角橙色渐变方块 */}
         <div style={{
           position: 'absolute',
-          right: '8%',
-          bottom: '3%',
-          width: '12%',
-          height: '15%',
+          right: `${bgLayout.gradientBlock.right}%`,
+          bottom: `${bgLayout.gradientBlock.bottom}%`,
+          width: `${bgLayout.gradientBlock.width}%`,
+          height: `${bgLayout.gradientBlock.height}%`,
           background: 'linear-gradient(to bottom, #F5BC67, rgba(245,188,103,0))',
         }} />
         {/* "Air Bubble Film" 标题 */}
         <div style={{
           position: 'absolute',
-          left: '8%',
-          top: '15%',
+          left: `${bgLayout.title.left}%`,
+          top: `${bgLayout.title.top}%`,
           fontFamily: '"Toppan Bunkyu Midashi Mincho", serif',
           fontWeight: 800,
           color: '#574373',
-          fontSize: '8vw',
+          fontSize: `${bgLayout.title.fontSize}vmin`,
           lineHeight: 1.05,
         }}>
           Air<br />Bubble<br />Film
@@ -560,27 +699,27 @@ export default function App() {
         {/* "V 0.1.0" */}
         <div style={{
           position: 'absolute',
-          right: '10%',
-          top: '18%',
-          fontFamily: '"Helvetica Neue", Arial, sans-serif',
-          fontWeight: 300,
-          color: '#999999',
-          fontSize: '1.2vw',
-        }}>
-          V 0.1.0
-        </div>
-        {/* "Powered by GET" + "via Opus 4.6" */}
-        <div style={{
-          position: 'absolute',
-          left: '8%',
-          bottom: '8%',
+          right: `${bgLayout.version.right}%`,
+          top: `${bgLayout.version.top}%`,
           fontFamily: '"Helvetica Neue", Arial, sans-serif',
           fontWeight: 300,
           color: '#574373',
-          fontSize: '1.2vw',
+          fontSize: `${bgLayout.version.fontSize}vmin`,
+        }}>
+          V 0.1.0
+        </div>
+        {/* 署名 */}
+        <div style={{
+          position: 'absolute',
+          left: `${bgLayout.credits.left}%`,
+          bottom: `${bgLayout.credits.bottom}%`,
+          fontFamily: '"Helvetica Neue", Arial, sans-serif',
+          fontWeight: 300,
+          color: '#574373',
+          fontSize: `${bgLayout.credits.fontSize}vmin`,
           lineHeight: 1.6,
         }}>
-          Powered by GET<br />via Opus 4.6
+          Designed by GET<br />June 07. 2026
         </div>
       </div>
 
@@ -603,6 +742,9 @@ export default function App() {
 
         <Environment files="/studio.hdr" environmentIntensity={envIntensity} environmentRotation={[hdrRotX, hdrRotY, 0]} />
 
+        <IntroController loaded={sceneLoaded} groupRef={introGroupRef} pressingRef={globalPressingRef} />
+
+        <group ref={introGroupRef}>
         {/* 地面塑料薄膜 */}
         <FilmBase
           tiltX={filmTiltX}
@@ -654,6 +796,7 @@ export default function App() {
               willBeNormal={pendingRemoveSet.has(i)}
               onDeflate={() => handleBubbleDeflate(i)}
               onRecover={() => handleBubbleRecover(i)}
+              globalPressingRef={globalPressingRef}
               specialAttenuationColor={specialAttenuationColor}
               specialEmissiveColor={specialEmissiveColor}
               specialEmissiveInt={specialEmissiveInt}
@@ -674,6 +817,7 @@ export default function App() {
             </group>
           );
         })}
+        </group>
 
 
         {/* 鼠标跟随光源（贴在薄膜表面） */}
@@ -1078,6 +1222,161 @@ export default function App() {
             style={{ verticalAlign: 'middle' }} />
         </div>
       </div>
+
+      {/* 开场渐显遮罩 */}
+      {maskMounted && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          background: '#f5f0eb',
+          zIndex: 5,
+          opacity: introPlaying ? 1 : 0,
+          transition: 'opacity 500ms cubic-bezier(0.0, 0.0, 0.1, 1)',
+          pointerEvents: 'none',
+        }} />
+      )}
+
+      {/* 背景布局调节面板（右上角，最高层可折叠） */}
+      {false && <BgLayoutPanel
+        open={bgPanelOpen}
+        onToggle={() => setBgPanelOpen((v) => !v)}
+        layout={bgLayout}
+        onChange={updateBgField}
+      />}
+    </div>
+  );
+}
+
+// === 背景布局调节面板 ===
+const BG_FIELD_GROUPS: ReadonlyArray<{
+  group: BgGroup;
+  label: string;
+  fields: ReadonlyArray<string>;
+}> = [
+  { group: 'whiteBlock',    label: '白色方块', fields: ['left', 'top', 'width', 'height'] },
+  { group: 'verticalBar',   label: '竖条渐变', fields: ['left', 'top', 'width', 'height'] },
+  { group: 'gradientBlock', label: '渐变色块', fields: ['right', 'bottom', 'width', 'height'] },
+  { group: 'title',         label: '标题',         fields: ['left', 'top', 'fontSize'] },
+  { group: 'version',       label: '版本号',       fields: ['right', 'top', 'fontSize'] },
+  { group: 'credits',       label: '署名',         fields: ['left', 'bottom', 'fontSize'] },
+];
+
+function BgLayoutPanel({
+  open,
+  onToggle,
+  layout,
+  onChange,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  layout: BgLayout;
+  onChange: <G extends BgGroup, K extends keyof BgLayout[G]>(group: G, key: K, value: number) => void;
+}) {
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 10,
+      right: 10,
+      zIndex: 9999,
+      background: 'rgba(255,255,255,0.92)',
+      backdropFilter: 'blur(6px)',
+      WebkitBackdropFilter: 'blur(6px)',
+      borderRadius: 10,
+      boxShadow: '0 4px 18px rgba(0,0,0,0.12)',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontSize: 11,
+      color: '#333',
+      width: open ? 240 : 'auto',
+      maxHeight: open ? '90vh' : 'auto',
+      overflowY: open ? 'auto' : 'hidden',
+      transition: 'width 160ms ease',
+    }}>
+      {/* 可点击标题栏 */}
+      <button
+        type="button"
+        onClick={onToggle}
+        style={{
+          all: 'unset',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          width: '100%',
+          boxSizing: 'border-box',
+          padding: '10px 14px',
+          cursor: 'pointer',
+          fontWeight: 600,
+          letterSpacing: '0.04em',
+          color: '#574373',
+          borderBottom: open ? '1px solid #eee' : 'none',
+          userSelect: 'none',
+        }}
+      >
+        <span>背景布局</span>
+        <span style={{
+          display: 'inline-block',
+          transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+          transition: 'transform 160ms ease',
+          fontSize: 10,
+          color: '#999',
+        }}>▾</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '10px 14px 14px' }}>
+          {BG_FIELD_GROUPS.map(({ group, label, fields }) => (
+            <div key={group} style={{ marginBottom: 12 }}>
+              <div style={{
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: '0.08em',
+                color: '#888',
+                textTransform: 'uppercase',
+                marginBottom: 6,
+              }}>{label}</div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '6px 8px',
+              }}>
+                {fields.map((f) => {
+                  const value = (layout[group] as Record<string, number>)[f];
+                  return (
+                    <label key={f} style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 2,
+                    }}>
+                      <span style={{ color: '#999', fontSize: 10 }}>{f}</span>
+                      <input
+                        type="number"
+                        step={0.5}
+                        value={value}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          if (!Number.isNaN(v)) {
+                            onChange(group, f as keyof BgLayout[typeof group], v);
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          boxSizing: 'border-box',
+                          padding: '4px 6px',
+                          border: '1px solid #ddd',
+                          borderRadius: 4,
+                          fontFamily: 'inherit',
+                          fontSize: 11,
+                          background: '#fafafa',
+                          outline: 'none',
+                        }}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
