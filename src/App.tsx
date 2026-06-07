@@ -1,6 +1,8 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { Environment, GradientTexture } from '@react-three/drei';
+import { SvgTextMesh, FontData } from './SvgText';
+import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Bubble } from './Bubble';
 import { audioManager } from './AudioManager';
@@ -19,17 +21,17 @@ const BUBBLE_SPACING = 0.96;
 const INITIAL_BG_LAYOUT = {
   whiteBlock: { left: 16.5, top: 0, width: 11, height: 10 },
   verticalBar: { left: 16.5, top: 46, width: 15, height: 28 },
-  gradientBlock: { right: 16.5, bottom: 1.5, width: 11, height: 15 },
-  title: { left: 15.5, top: 15, fontSize: 8 },
-  version: { right: 16.5, top: 15, fontSize: 1.4 },
-  credits: { left: 16.5, bottom: 16.5, fontSize: 1.4 },
+  gradientBlock: { right: 16.5, bottom: 1.5, width: 11, height: 22 },
+  title: { left: 15.5, top: 21, fontSize: 8 },
+  version: { right: 16.5, top: 16, fontSize: 1.4 },
+  credits: { left: 16.5, bottom: 11, fontSize: 1.4 },
 };
 
 const SMALL_BG_LAYOUT = {
-  whiteBlock: { left: 6, top: 0, width: 19.5, height: 10 },
-  verticalBar: { left: 6, top: 46, width: 19.5, height: 36 },
-  gradientBlock: { right: 6, bottom: 2, width: 24, height: 28 },
-  title: { left: 5.5, top: 12, fontSize: 18.5 },
+  whiteBlock: { left: 6, top: -5, width: 19.5, height: 15 },
+  verticalBar: { left: 6, top: 49, width: 19.5, height: 37 },
+  gradientBlock: { right: 6, bottom: -5, width: 24, height: 32 },
+  title: { left: 5.5, top: 20, fontSize: 18.5 },
   version: { right: 6, top: 12, fontSize: 3 },
   credits: { left: 6.5, bottom: 8, fontSize: 3 },
 };
@@ -285,18 +287,39 @@ function MouseLight({ filmMeshRef, intensity, color, heightOffset, distance, dec
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const heightRef = useRef(heightOffset);
   heightRef.current = heightOffset;
+  const onFilm = useRef(false);
+  const fadeStart = useRef(0);
+  const FADE_DURATION = 600;
 
   useFrame((state) => {
     if (!lightRef.current || !filmMeshRef.current) return;
     raycaster.setFromCamera(state.pointer, state.camera);
     const intersects = raycaster.intersectObject(filmMeshRef.current);
+    const now = performance.now();
     if (intersects.length > 0) {
       const p = intersects[0].point;
       lightRef.current.position.set(p.x, p.y + heightRef.current, p.z);
+      if (!onFilm.current) {
+        onFilm.current = true;
+        fadeStart.current = now;
+      }
+      // 渐显
+      const elapsed = now - fadeStart.current;
+      const t = Math.min(elapsed / FADE_DURATION, 1);
+      lightRef.current.intensity = intensity * t;
+    } else {
+      if (onFilm.current) {
+        onFilm.current = false;
+        fadeStart.current = now;
+      }
+      // 渐隐
+      const elapsed = now - fadeStart.current;
+      const t = Math.min(elapsed / FADE_DURATION, 1);
+      lightRef.current.intensity = intensity * (1 - t);
     }
   });
 
-  return <pointLight ref={lightRef} color={color} intensity={intensity} distance={distance} decay={decay} />;
+  return <pointLight ref={lightRef} color={color} intensity={0} distance={distance} decay={decay} />;
 }
 
 function IntroController({ loaded, groupRef, pressingRef }: { loaded: boolean; groupRef: React.RefObject<THREE.Group>; pressingRef: React.MutableRefObject<number> }) {
@@ -306,7 +329,7 @@ function IntroController({ loaded, groupRef, pressingRef }: { loaded: boolean; g
   const shakeStopTime = useRef(0);  // 抖动停止时间
   const lastProgress = useRef(0);   // 上一帧的progress
   const INTRO_OFFSET_Y = -1.0;
-  const INTRO_DURATION = 500;
+  const INTRO_DURATION = 1000;
   const SHAKE_DELAY = 400; // 延迟0.4秒
 
   useFrame(() => {
@@ -367,8 +390,174 @@ function IntroController({ loaded, groupRef, pressingRef }: { loaded: boolean; g
   return null;
 }
 
+// === Canvas 内的场景背景：纯色 + 装饰几何 ===
+function SceneBG() {
+  const { scene } = useThree();
+  useEffect(() => {
+    scene.background = new THREE.Color('#f5f0eb');
+  }, [scene]);
+  return null;
+}
+
+function SceneBackgroundWrapper({ layout, titleFont, sansFont, lightParams }: { layout: BgLayout; titleFont: FontData | null; sansFont: FontData | null; lightParams: { color: string; intensity: number; distance: number; decay: number; z: number } }) {
+  const { viewport } = useThree();
+  return <SceneBackground layout={layout} viewW={viewport.width} viewH={viewport.height} titleFont={titleFont} sansFont={sansFont} lightParams={lightParams} />;
+}
+
+function SceneBackground({ layout, viewW: _vw, viewH: _vh, titleFont, sansFont, lightParams }: { layout: BgLayout; viewW: number; viewH: number; titleFont: FontData | null; sansFont: FontData | null; lightParams: { color: string; intensity: number; distance: number; decay: number; z: number } }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const bgLightRef = useRef<THREE.PointLight>(null);
+  const whiteRef = useRef<THREE.Mesh>(null);
+  const vertBarRef = useRef<THREE.Mesh>(null);
+  const gradBlockRef = useRef<THREE.Mesh>(null);
+  const titleRef = useRef<THREE.Group>(null);
+  const versionRef = useRef<THREE.Group>(null);
+  const creditsRef = useRef<THREE.Group>(null);
+  const { camera, pointer, size } = useThree();
+  const tmpDir = useMemo(() => new THREE.Vector3(), []);
+
+  useFrame(() => {
+    if (!groupRef.current) return;
+    const ortho = camera as THREE.OrthographicCamera;
+    const w = size.width / ortho.zoom;
+    const h = size.height / ortho.zoom;
+    const pctToX = (pct: number) => (pct / 100 - 0.5) * w;
+    const pctToY = (pct: number) => -(pct / 100 - 0.5) * h;
+
+    // 背景组放在相机前方远处
+    tmpDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    groupRef.current.position.copy(camera.position).add(tmpDir.multiplyScalar(40));
+    groupRef.current.lookAt(camera.position);
+    groupRef.current.scale.set(1, 1, 1);
+
+    // 背景光源跟随鼠标
+    if (bgLightRef.current) {
+      bgLightRef.current.position.set(pointer.x * w * 0.5, pointer.y * h * 0.5, lightParams.z);
+    }
+
+    // 更新 mesh 位置和尺寸
+    const wb = layout.whiteBlock;
+    const vb = layout.verticalBar;
+    const gb = layout.gradientBlock;
+    const gbLeft = 100 - gb.right - gb.width;
+    const gbTop = 100 - gb.bottom - gb.height;
+
+    if (whiteRef.current) {
+      whiteRef.current.position.set(pctToX(wb.left + wb.width / 2), pctToY(wb.top + wb.height / 2), 0);
+      whiteRef.current.scale.set((wb.width / 100) * w, (wb.height / 100) * h, 1);
+    }
+    if (vertBarRef.current) {
+      vertBarRef.current.position.set(pctToX(vb.left + vb.width / 2), pctToY(vb.top + vb.height / 2), 0);
+      vertBarRef.current.scale.set((vb.width / 100) * w, (vb.height / 100) * h, 1);
+    }
+    if (gradBlockRef.current) {
+      gradBlockRef.current.position.set(pctToX(gbLeft + gb.width / 2), pctToY(gbTop + gb.height / 2), 0);
+      gradBlockRef.current.scale.set((gb.width / 100) * w, (gb.height / 100) * h, 1);
+    }
+    if (titleRef.current) {
+      titleRef.current.position.set(pctToX(layout.title.left), pctToY(layout.title.top), 0.02);
+    }
+    if (versionRef.current) {
+      versionRef.current.position.set(pctToX(100 - layout.version.right), pctToY(layout.version.top), 0.02);
+    }
+    if (creditsRef.current) {
+      creditsRef.current.position.set(pctToX(layout.credits.left), pctToY(100 - layout.credits.bottom), 0.02);
+    }
+  });
+
+  const ortho = camera as THREE.OrthographicCamera;
+  const w = size.width / ortho.zoom;
+  const h = size.height / ortho.zoom;
+  const vmin = Math.min(w, h);
+  const titleFontSize = (layout.title.fontSize / 100) * vmin;
+  const versionFontSize = (layout.version.fontSize / 100) * vmin;
+  const creditsFontSize = (layout.credits.fontSize / 100) * vmin;
+
+  return (
+    <group ref={groupRef}>
+      {/* 背景鼠标光源 */}
+      <pointLight ref={bgLightRef} color={lightParams.color} intensity={lightParams.intensity} distance={lightParams.distance} decay={lightParams.decay} />
+      {/* 左上角白色方块 */}
+      <mesh ref={whiteRef}>
+        <planeGeometry args={[1, 1]} />
+        <meshStandardMaterial color="#ffffff" toneMapped={false} emissive="#ffffff" emissiveIntensity={0.2} />
+      </mesh>
+      {/* 左侧竖条白色渐变 */}
+      <mesh ref={vertBarRef}>
+        <planeGeometry args={[1, 1]} />
+        <meshStandardMaterial color="#ffffff" transparent toneMapped={false} emissive="#ffffff" emissiveIntensity={0.2}>
+          <GradientTexture attach="alphaMap" stops={[0, 1]} colors={['#ffffff', '#000000']} />
+        </meshStandardMaterial>
+      </mesh>
+      {/* 右下角橙色渐变方块 */}
+      <mesh ref={gradBlockRef}>
+        <planeGeometry args={[1, 1]} />
+        <meshStandardMaterial color="#F5BC67" transparent toneMapped={false} emissive="#F5BC67" emissiveIntensity={0.2}>
+          <GradientTexture attach="alphaMap" stops={[0, 1]} colors={['#ffffff', '#000000']} />
+        </meshStandardMaterial>
+      </mesh>
+      {/* 标题 "Air Bubble Film" */}
+      {titleFont && (
+        <group ref={titleRef}>
+          <SvgTextMesh
+            text={'Air\nBubble\nFilm'}
+            fontData={titleFont}
+            fontSize={titleFontSize}
+            color="#574373"
+            position={[0, 0, 0]}
+            anchorX="left"
+            anchorY="top"
+            lineHeight={1.05}
+          />
+        </group>
+      )}
+      {/* 版本号 V 0.1.0 */}
+      {sansFont && (
+        <group ref={versionRef}>
+          <SvgTextMesh
+            text="V 0.1.0"
+            fontData={sansFont}
+            fontSize={versionFontSize}
+            color="#574373"
+            position={[0, 0, 0]}
+            anchorX="right"
+            anchorY="top"
+          />
+        </group>
+      )}
+      {/* 署名 */}
+      {sansFont && (
+        <group ref={creditsRef}>
+          <SvgTextMesh
+            text={'Designed by GET\nJune 07. 2026'}
+            fontData={sansFont}
+            fontSize={creditsFontSize}
+            color="#574373"
+            position={[0, 0, 0]}
+            anchorX="left"
+            anchorY="bottom"
+            lineHeight={1.6}
+          />
+        </group>
+      )}
+    </group>
+  );
+}
+
 function CameraController({ azimuth }: { azimuth: number }) {
   const { camera, size } = useThree();
+
+  // 初始设置 zoom（确保第一帧 viewport 正确）
+  useEffect(() => {
+    const contentDiag = 11.9;
+    const baseZoom = 55;
+    const maxFill = 0.98;
+    const fillAtBase = contentDiag * baseZoom / size.width;
+    const ortho = camera as THREE.OrthographicCamera;
+    ortho.zoom = fillAtBase <= maxFill ? baseZoom : size.width * maxFill / contentDiag;
+    camera.updateProjectionMatrix();
+  }, [camera, size.width]);
+
   useFrame(() => {
     const dist = 10;
     const elevation = Math.PI / 4;
@@ -462,11 +651,22 @@ export default function App() {
   const [specialGradient2, setSpecialGradient2] = useState('#fff04d');
   const [specialGradient3, setSpecialGradient3] = useState('#ff7b00');
 
+  // 加载字形数据
+  const [titleFont, setTitleFont] = useState<FontData | null>(null);
+  const [sansFont, setSansFont] = useState<FontData | null>(null);
+
+  useEffect(() => {
+    fetch('/fonts/title-glyphs.json').then(r => r.json()).then(setTitleFont);
+    fetch('/fonts/sans-glyphs.json').then(r => r.json()).then(setSansFont);
+  }, []);
+
   // 背景装饰布局（state 化，支持运行时调节）
   const [bgLayout, setBgLayout] = useState<BgLayout>(
     () => Math.min(window.innerWidth, window.innerHeight) >= 670 ? INITIAL_BG_LAYOUT : SMALL_BG_LAYOUT
   );
   const [bgPanelOpen, setBgPanelOpen] = useState(false);
+  const [bgLightPanelOpen, setBgLightPanelOpen] = useState(false);
+  const [bgLightParams, setBgLightParams] = useState({ color: '#ff7300', intensity: 60, distance: 12, decay: 1, z: 2 });
 
   // 窗口大小变化时切换布局
   useEffect(() => {
@@ -649,80 +849,6 @@ export default function App() {
 
   return (
     <div className="app-container" style={{ position: 'relative', flexShrink: 0, overflow: 'hidden' }}>
-      {/* 背景装饰层 */}
-      <div style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        zIndex: 0,
-      }}>
-        {/* 左上角白色方块 */}
-        <div style={{
-          position: 'absolute',
-          left: `${bgLayout.whiteBlock.left}%`,
-          top: `${bgLayout.whiteBlock.top}%`,
-          width: `${bgLayout.whiteBlock.width}%`,
-          height: `${bgLayout.whiteBlock.height}%`,
-          background: '#ffffff',
-        }} />
-        {/* 左侧中间竖条白色渐变 */}
-        <div style={{
-          position: 'absolute',
-          left: `${bgLayout.verticalBar.left}%`,
-          top: `${bgLayout.verticalBar.top}%`,
-          width: `${bgLayout.verticalBar.width}%`,
-          height: `${bgLayout.verticalBar.height}%`,
-          background: 'linear-gradient(to bottom, #ffffff, transparent)',
-        }} />
-        {/* 右下角橙色渐变方块 */}
-        <div style={{
-          position: 'absolute',
-          right: `${bgLayout.gradientBlock.right}%`,
-          bottom: `${bgLayout.gradientBlock.bottom}%`,
-          width: `${bgLayout.gradientBlock.width}%`,
-          height: `${bgLayout.gradientBlock.height}%`,
-          background: 'linear-gradient(to bottom, #F5BC67, rgba(245,188,103,0))',
-        }} />
-        {/* "Air Bubble Film" 标题 */}
-        <div style={{
-          position: 'absolute',
-          left: `${bgLayout.title.left}%`,
-          top: `${bgLayout.title.top}%`,
-          fontFamily: '"Toppan Bunkyu Midashi Mincho", serif',
-          fontWeight: 800,
-          color: '#574373',
-          fontSize: `${bgLayout.title.fontSize}vmin`,
-          lineHeight: 1.05,
-        }}>
-          Air<br />Bubble<br />Film
-        </div>
-        {/* "V 0.1.0" */}
-        <div style={{
-          position: 'absolute',
-          right: `${bgLayout.version.right}%`,
-          top: `${bgLayout.version.top}%`,
-          fontFamily: '"Helvetica Neue", Arial, sans-serif',
-          fontWeight: 300,
-          color: '#574373',
-          fontSize: `${bgLayout.version.fontSize}vmin`,
-        }}>
-          V 0.1.0
-        </div>
-        {/* 署名 */}
-        <div style={{
-          position: 'absolute',
-          left: `${bgLayout.credits.left}%`,
-          bottom: `${bgLayout.credits.bottom}%`,
-          fontFamily: '"Helvetica Neue", Arial, sans-serif',
-          fontWeight: 300,
-          color: '#574373',
-          fontSize: `${bgLayout.credits.fontSize}vmin`,
-          lineHeight: 1.6,
-        }}>
-          Designed by GET<br />June 07. 2026
-        </div>
-      </div>
-
       <Canvas
         shadows
         orthographic
@@ -734,8 +860,9 @@ export default function App() {
         }}
         style={{ position: 'absolute', inset: 0, zIndex: 1 }}
         dpr={[1, 2]}
-        gl={{ antialias: true, alpha: true }}
+        gl={{ antialias: true }}
       >
+        <SceneBG />
         <ExposureController exposure={exposure} />
         <ambientLight intensity={ambientIntensity} color="#fff8f0" />
         <RotatingLights azimuth={azimuth} />
@@ -743,6 +870,9 @@ export default function App() {
         <Environment files="/studio.hdr" environmentIntensity={envIntensity} environmentRotation={[hdrRotX, hdrRotY, 0]} />
 
         <IntroController loaded={sceneLoaded} groupRef={introGroupRef} pressingRef={globalPressingRef} />
+
+        {/* 3D 背景装饰（面朝相机、位于气泡后方） */}
+        <SceneBackgroundWrapper layout={bgLayout} titleFont={titleFont} sansFont={sansFont} lightParams={bgLightParams} />
 
         <group ref={introGroupRef}>
         {/* 地面塑料薄膜 */}
@@ -839,6 +969,17 @@ export default function App() {
         />
 
         <CameraController azimuth={azimuth} />
+
+        {/* Bloom 后处理 - 暂时禁用调试 */}
+        {false && <EffectComposer>
+          <Bloom
+            mipmapBlur
+            intensity={0.4}
+            luminanceThreshold={0.6}
+            luminanceSmoothing={0.9}
+            radius={0.8}
+          />
+        </EffectComposer>}
       </Canvas>
 
       {/* 左侧材质面板 */}
@@ -1236,13 +1377,56 @@ export default function App() {
         }} />
       )}
 
-      {/* 背景布局调节面板（右上角，最高层可折叠） */}
+      {/* 背景布局调节面板（隐藏） */}
       {false && <BgLayoutPanel
         open={bgPanelOpen}
         onToggle={() => setBgPanelOpen((v) => !v)}
         layout={bgLayout}
         onChange={updateBgField}
       />}
+
+      {/* 背景光源控制面板（隐藏） */}
+      {false && <BgLightPanel
+        open={bgLightPanelOpen}
+        onToggle={() => setBgLightPanelOpen((v) => !v)}
+        params={bgLightParams}
+        onChange={(key, val) => setBgLightParams(p => ({ ...p, [key]: val }))}
+      />}
+    </div>
+  );
+}
+
+// === 背景光源控制面板 ===
+function BgLightPanel({ open, onToggle, params, onChange }: {
+  open: boolean;
+  onToggle: () => void;
+  params: { color: string; intensity: number; distance: number; decay: number; z: number };
+  onChange: (key: string, val: number | string) => void;
+}) {
+  return (
+    <div style={{ position: 'fixed', top: 12, right: 12, zIndex: 9999, background: 'rgba(255,255,255,0.95)', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontFamily: 'monospace', minWidth: 200, boxShadow: '0 2px 12px rgba(0,0,0,0.1)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', fontWeight: 700, color: '#574373' }} onClick={onToggle}>
+        <span>背景光源</span><span>{open ? '▴' : '▾'}</span>
+      </div>
+      {open && (
+        <div style={{ marginTop: 8 }}>
+          <label style={{ display: 'block', marginBottom: 6 }}>
+            color <input type="color" value={params.color} onChange={e => onChange('color', e.target.value)} style={{ marginLeft: 8, verticalAlign: 'middle' }} />
+          </label>
+          <label style={{ display: 'block', marginBottom: 6 }}>
+            intensity <input type="number" value={params.intensity} step={5} onChange={e => onChange('intensity', +e.target.value)} style={{ width: 60, marginLeft: 8 }} />
+          </label>
+          <label style={{ display: 'block', marginBottom: 6 }}>
+            distance <input type="number" value={params.distance} step={1} onChange={e => onChange('distance', +e.target.value)} style={{ width: 60, marginLeft: 8 }} />
+          </label>
+          <label style={{ display: 'block', marginBottom: 6 }}>
+            decay <input type="number" value={params.decay} step={0.5} onChange={e => onChange('decay', +e.target.value)} style={{ width: 60, marginLeft: 8 }} />
+          </label>
+          <label style={{ display: 'block', marginBottom: 6 }}>
+            z <input type="number" value={params.z} step={0.5} onChange={e => onChange('z', +e.target.value)} style={{ width: 60, marginLeft: 8 }} />
+          </label>
+        </div>
+      )}
     </div>
   );
 }

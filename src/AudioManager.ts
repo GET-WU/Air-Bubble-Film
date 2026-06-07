@@ -43,7 +43,7 @@ class BubbleAudioManager {
     if (this.bgmStarted) return;
     this.bgmStarted = true;
     if (!this.bgmBuffer) {
-      this.bgmBuffer = await this.loadBuffer('/bgm.mp4');
+      this.bgmBuffer = await this.loadBuffer('/bgm.mp3');
     }
     const source = this.audioContext!.createBufferSource();
     source.buffer = this.bgmBuffer;
