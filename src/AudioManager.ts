@@ -32,7 +32,9 @@ class BubbleAudioManager {
   }
 
   private async loadBuffer(url: string): Promise<AudioBuffer> {
-    const resp = await fetch(url);
+    const base = import.meta.env.BASE_URL;
+    const fullUrl = url.startsWith('/') ? `${base}${url.slice(1)}` : url;
+    const resp = await fetch(fullUrl);
     const arrayBuf = await resp.arrayBuffer();
     return this.audioContext!.decodeAudioData(arrayBuf);
   }

@@ -656,8 +656,8 @@ export default function App() {
   const [sansFont, setSansFont] = useState<FontData | null>(null);
 
   useEffect(() => {
-    fetch('/fonts/title-glyphs.json').then(r => r.json()).then(setTitleFont);
-    fetch('/fonts/sans-glyphs.json').then(r => r.json()).then(setSansFont);
+    fetch(`${import.meta.env.BASE_URL}fonts/title-glyphs.json`).then(r => r.json()).then(setTitleFont);
+    fetch(`${import.meta.env.BASE_URL}fonts/sans-glyphs.json`).then(r => r.json()).then(setSansFont);
   }, []);
 
   // 背景装饰布局（state 化，支持运行时调节）
@@ -867,7 +867,7 @@ export default function App() {
         <ambientLight intensity={ambientIntensity} color="#fff8f0" />
         <RotatingLights azimuth={azimuth} />
 
-        <Environment files="/studio.hdr" environmentIntensity={envIntensity} environmentRotation={[hdrRotX, hdrRotY, 0]} />
+        <Environment files={`${import.meta.env.BASE_URL}studio.hdr`} environmentIntensity={envIntensity} environmentRotation={[hdrRotX, hdrRotY, 0]} />
 
         <IntroController loaded={sceneLoaded} groupRef={introGroupRef} pressingRef={globalPressingRef} />
 
