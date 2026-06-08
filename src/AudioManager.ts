@@ -14,6 +14,7 @@ class BubbleAudioManager {
   private popBuffer: AudioBuffer | null = null;
   private bgmBuffer: AudioBuffer | null = null;
   private bgmStarted = false;
+  private preloaded = false;
 
   // 点击音效可调参数（外部直接修改）
   popRate = 1.0;
@@ -39,22 +40,53 @@ class BubbleAudioManager {
     return this.audioContext!.decodeAudioData(arrayBuf);
   }
 
-  /** 启动背景音乐（循环播放） */
-  async startBGM() {
+  /**
+   * 首次用户交互时调用：初始化 AudioContext 并预加载所有音频 buffer。
+   * BGM 加载完立即播放，其余 buffer 并行加载以消除后续首次播放延迟。
+   */
+  async activate() {
+    if (this.preloaded) return;
+    this.preloaded = true;
     this.ensureContext();
-    if (this.bgmStarted) return;
+    // 并行预加载所有音频
+    const [bgm, pop, recover, recoverSpecial, squeeze] = await Promise.all([
+      this.loadBuffer('/bgm.mp3'),
+      this.loadBuffer('/pop.mp4'),
+      this.loadBuffer('/recover.mp4'),
+      this.loadBuffer('/recover-special.mp4'),
+      this.loadBuffer('/squeeze.mp4'),
+    ]);
+    this.bgmBuffer = bgm;
+    this.popBuffer = pop;
+    this.recoverBuffer = recover;
+    this.recoverSpecialBuffer = recoverSpecial;
+    this.squeezeBuffer = squeeze;
+    // 立即播放 BGM
+    this.startBGMInternal();
+  }
+
+  private startBGMInternal() {
+    if (this.bgmStarted || !this.bgmBuffer) return;
     this.bgmStarted = true;
-    if (!this.bgmBuffer) {
-      this.bgmBuffer = await this.loadBuffer('/bgm.mp3');
-    }
     const source = this.audioContext!.createBufferSource();
     source.buffer = this.bgmBuffer;
     source.loop = true;
     const gainNode = this.audioContext!.createGain();
-    gainNode.gain.value = 0.3; // 背景音量较低
+    gainNode.gain.value = 0.3;
     source.connect(gainNode);
     gainNode.connect(this.audioContext!.destination);
     source.start();
+  }
+
+  /** 启动背景音乐（循环播放） - 兼容旧调用 */
+  async startBGM() {
+    if (this.bgmStarted) return;
+    // 如果还未预加载，走旧逻辑
+    this.ensureContext();
+    if (!this.bgmBuffer) {
+      this.bgmBuffer = await this.loadBuffer('/bgm.mp3');
+    }
+    this.startBGMInternal();
   }
 
   play() {

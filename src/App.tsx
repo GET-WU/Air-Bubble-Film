@@ -707,12 +707,19 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [sceneLoaded]);
 
-  // 背景音乐自动播放（页面加载即尝试，首次交互时补resume）
+  // 首次用户交互时激活音频系统（预加载所有 buffer + 播放 BGM）
   useEffect(() => {
-    audioManager.startBGM();
-    const resumeBGM = () => { audioManager.startBGM(); document.removeEventListener('click', resumeBGM); document.removeEventListener('touchstart', resumeBGM); };
-    document.addEventListener('click', resumeBGM, { once: true });
-    document.addEventListener('touchstart', resumeBGM, { once: true });
+    const activate = () => {
+      audioManager.activate();
+      document.removeEventListener('click', activate);
+      document.removeEventListener('touchstart', activate);
+    };
+    document.addEventListener('click', activate, { once: true });
+    document.addEventListener('touchstart', activate, { once: true });
+    return () => {
+      document.removeEventListener('click', activate);
+      document.removeEventListener('touchstart', activate);
+    };
   }, []);
 
   // === 动态特殊气泡管理 ===
@@ -848,7 +855,7 @@ export default function App() {
   }, [filmRev, getFilmSurface]);
 
   return (
-    <div className="app-container" style={{ position: 'relative', flexShrink: 0, overflow: 'hidden' }}>
+    <div className="app-container" style={{ position: 'relative', flexShrink: 0, overflow: 'hidden' }} onContextMenu={e => e.preventDefault()}>
       <Canvas
         shadows
         orthographic
