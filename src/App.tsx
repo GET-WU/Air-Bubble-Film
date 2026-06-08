@@ -707,18 +707,18 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [sceneLoaded]);
 
-  // 首次用户交互时激活音频系统（预加载所有 buffer + 播放 BGM）
+  // 首次用户交互时恢复被浏览器阻止的音频（BGM 已在页面加载时尝试自动播放）
   useEffect(() => {
-    const activate = () => {
-      audioManager.activate();
-      document.removeEventListener('click', activate);
-      document.removeEventListener('touchstart', activate);
+    const handleInteraction = () => {
+      audioManager.resume();
+      document.removeEventListener('click', handleInteraction);
+      document.removeEventListener('touchstart', handleInteraction);
     };
-    document.addEventListener('click', activate, { once: true });
-    document.addEventListener('touchstart', activate, { once: true });
+    document.addEventListener('click', handleInteraction, { once: true });
+    document.addEventListener('touchstart', handleInteraction, { once: true });
     return () => {
-      document.removeEventListener('click', activate);
-      document.removeEventListener('touchstart', activate);
+      document.removeEventListener('click', handleInteraction);
+      document.removeEventListener('touchstart', handleInteraction);
     };
   }, []);
 

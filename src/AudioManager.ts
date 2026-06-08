@@ -1,7 +1,7 @@
 /**
  * BubbleAudioManager
- * - Plays audio files for pop, recover, squeeze, and BGM.
- * - Lazy-creates AudioContext to comply with iOS gesture-required policy.
+ * - 页面加载时立即 prefetch 所有音频文件（无需用户手势）
+ * - 尝试自动播放 BGM，若被浏览器策略阻止则在首次交互时恢复
  * - Caps simultaneous voices to avoid clipping on rapid drags.
  */
 class BubbleAudioManager {
@@ -14,13 +14,60 @@ class BubbleAudioManager {
   private popBuffer: AudioBuffer | null = null;
   private bgmBuffer: AudioBuffer | null = null;
   private bgmStarted = false;
-  private preloaded = false;
 
-  // 点击音效可调参数（外部直接修改）
+  // 预加载的原始 ArrayBuffer（页面加载时即开始 fetch）
+  private rawBuffers: Promise<Record<string, ArrayBuffer>>;
+
+  // 点击音效可调参数
   popRate = 1.0;
   popHighpass = 0;
   popLowpass = 7000;
   popGain = 0.6;
+
+  constructor() {
+    // 页面加载时立即 fetch 所有音频文件（仅下载，不需要 AudioContext）
+    this.rawBuffers = this.prefetchAll();
+    // fetch 完成后尝试自动播放 BGM
+    this.rawBuffers.then(() => this.tryAutoplay());
+  }
+
+  private async prefetchAll(): Promise<Record<string, ArrayBuffer>> {
+    const base = import.meta.env.BASE_URL;
+    const files: Record<string, string> = {
+      bgm: `${base}bgm.mp3`,
+      pop: `${base}pop.mp4`,
+      recover: `${base}recover.mp4`,
+      recoverSpecial: `${base}recover-special.mp4`,
+      squeeze: `${base}squeeze.mp4`,
+    };
+    const entries = await Promise.all(
+      Object.entries(files).map(async ([key, url]) => {
+        const resp = await fetch(url);
+        return [key, await resp.arrayBuffer()] as [string, ArrayBuffer];
+      })
+    );
+    return Object.fromEntries(entries);
+  }
+
+  /** 尝试自动播放 BGM，若被浏览器策略阻止则静默失败 */
+  private async tryAutoplay() {
+    try {
+      this.ensureContext();
+      await this.decodeAll();
+      this.startBGMInternal();
+    } catch {
+      // 浏览器阻止了自动播放，等待用户交互时恢复
+    }
+  }
+
+  /** 用户首次交互时调用：恢复被阻止的 AudioContext 并播放 BGM */
+  async resume() {
+    this.ensureContext();
+    if (!this.popBuffer) {
+      await this.decodeAll();
+    }
+    this.startBGMInternal();
+  }
 
   private ensureContext() {
     if (!this.audioContext) {
@@ -32,37 +79,21 @@ class BubbleAudioManager {
     }
   }
 
-  private async loadBuffer(url: string): Promise<AudioBuffer> {
-    const base = import.meta.env.BASE_URL;
-    const fullUrl = url.startsWith('/') ? `${base}${url.slice(1)}` : url;
-    const resp = await fetch(fullUrl);
-    const arrayBuf = await resp.arrayBuffer();
-    return this.audioContext!.decodeAudioData(arrayBuf);
-  }
-
-  /**
-   * 首次用户交互时调用：初始化 AudioContext 并预加载所有音频 buffer。
-   * BGM 加载完立即播放，其余 buffer 并行加载以消除后续首次播放延迟。
-   */
-  async activate() {
-    if (this.preloaded) return;
-    this.preloaded = true;
-    this.ensureContext();
-    // 并行预加载所有音频
+  private async decodeAll() {
+    if (this.popBuffer) return; // 已解码过
+    const raw = await this.rawBuffers;
     const [bgm, pop, recover, recoverSpecial, squeeze] = await Promise.all([
-      this.loadBuffer('/bgm.mp3'),
-      this.loadBuffer('/pop.mp4'),
-      this.loadBuffer('/recover.mp4'),
-      this.loadBuffer('/recover-special.mp4'),
-      this.loadBuffer('/squeeze.mp4'),
+      this.audioContext!.decodeAudioData(raw.bgm.slice(0)),
+      this.audioContext!.decodeAudioData(raw.pop.slice(0)),
+      this.audioContext!.decodeAudioData(raw.recover.slice(0)),
+      this.audioContext!.decodeAudioData(raw.recoverSpecial.slice(0)),
+      this.audioContext!.decodeAudioData(raw.squeeze.slice(0)),
     ]);
     this.bgmBuffer = bgm;
     this.popBuffer = pop;
     this.recoverBuffer = recover;
     this.recoverSpecialBuffer = recoverSpecial;
     this.squeezeBuffer = squeeze;
-    // 立即播放 BGM
-    this.startBGMInternal();
   }
 
   private startBGMInternal() {
@@ -78,66 +109,45 @@ class BubbleAudioManager {
     source.start();
   }
 
-  /** 启动背景音乐（循环播放） - 兼容旧调用 */
-  async startBGM() {
-    if (this.bgmStarted) return;
-    // 如果还未预加载，走旧逻辑
-    this.ensureContext();
-    if (!this.bgmBuffer) {
-      this.bgmBuffer = await this.loadBuffer('/bgm.mp3');
-    }
-    this.startBGMInternal();
-  }
-
   play() {
     this.ensureContext();
-    if (!this.bgmStarted) this.startBGM();
+    if (!this.popBuffer) return; // buffer 未就绪时静默跳过
     if (this.activeSounds >= this.maxConcurrent) return;
     this.activeSounds++;
-    const startPlayback = async () => {
-      if (!this.popBuffer) {
-        this.popBuffer = await this.loadBuffer('/pop.mp4');
-      }
-      const ctx = this.audioContext!;
-      const source = ctx.createBufferSource();
-      source.buffer = this.popBuffer;
-      source.playbackRate.value = this.popRate - 0.15 + Math.random() * 0.15;
+    const ctx = this.audioContext!;
+    const source = ctx.createBufferSource();
+    source.buffer = this.popBuffer;
+    source.playbackRate.value = this.popRate - 0.15 + Math.random() * 0.15;
 
-      const gainNode = ctx.createGain();
-      gainNode.gain.value = this.popGain;
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = this.popGain;
 
-      let head: AudioNode = source;
-      if (this.popHighpass > 0) {
-        const highpass = ctx.createBiquadFilter();
-        highpass.type = 'highpass';
-        highpass.frequency.value = this.popHighpass;
-        source.connect(highpass);
-        head = highpass;
-      }
-      if (this.popLowpass > 0 && this.popLowpass < 20000) {
-        const lowpass = ctx.createBiquadFilter();
-        lowpass.type = 'lowpass';
-        lowpass.frequency.value = this.popLowpass;
-        head.connect(lowpass);
-        head = lowpass;
-      }
-      head.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      source.start(0, 0.1);
-      source.stop(ctx.currentTime + 0.6);
-      source.onended = () => { this.activeSounds--; };
-    };
-    startPlayback();
+    let head: AudioNode = source;
+    if (this.popHighpass > 0) {
+      const highpass = ctx.createBiquadFilter();
+      highpass.type = 'highpass';
+      highpass.frequency.value = this.popHighpass;
+      source.connect(highpass);
+      head = highpass;
+    }
+    if (this.popLowpass > 0 && this.popLowpass < 20000) {
+      const lowpass = ctx.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.value = this.popLowpass;
+      head.connect(lowpass);
+      head = lowpass;
+    }
+    head.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    source.start(0, 0.1);
+    source.stop(ctx.currentTime + 0.6);
+    source.onended = () => { this.activeSounds--; };
   }
 
-  async playRecover(highPitch = false) {
+  playRecover(highPitch = false) {
     this.ensureContext();
-    if (!this.bgmStarted) this.startBGM();
     if (highPitch) {
-      // 特殊气泡用恢复3
-      if (!this.recoverSpecialBuffer) {
-        this.recoverSpecialBuffer = await this.loadBuffer('/recover-special.mp4');
-      }
+      if (!this.recoverSpecialBuffer) return;
       const source = this.audioContext!.createBufferSource();
       source.buffer = this.recoverSpecialBuffer;
       source.playbackRate.value = 0.8 + Math.random() * 0.15;
@@ -147,9 +157,7 @@ class BubbleAudioManager {
       gainNode.connect(this.audioContext!.destination);
       source.start();
     } else {
-      if (!this.recoverBuffer) {
-        this.recoverBuffer = await this.loadBuffer('/recover.mp4');
-      }
+      if (!this.recoverBuffer) return;
       const source = this.audioContext!.createBufferSource();
       source.buffer = this.recoverBuffer;
       source.playbackRate.value = 0.8 + Math.random() * 0.15;
@@ -163,12 +171,8 @@ class BubbleAudioManager {
 
   playSqueeze(): { stop: () => void } {
     this.ensureContext();
-    if (!this.bgmStarted) this.startBGM();
     let source: AudioBufferSourceNode | null = null;
-    const startPlayback = async () => {
-      if (!this.squeezeBuffer) {
-        this.squeezeBuffer = await this.loadBuffer('/squeeze.mp4');
-      }
+    if (this.squeezeBuffer) {
       source = this.audioContext!.createBufferSource();
       source.buffer = this.squeezeBuffer;
       source.playbackRate.value = 0.9 + Math.random() * 0.2;
@@ -177,8 +181,7 @@ class BubbleAudioManager {
       source.connect(squeezeGain);
       squeezeGain.connect(this.audioContext!.destination);
       source.start();
-    };
-    startPlayback();
+    }
     return {
       stop: () => { if (source) { try { source.stop(); } catch {} } }
     };
