@@ -25,29 +25,44 @@ class BubbleAudioManager {
   popGain = 0.6;
 
   constructor() {
-    // 页面加载时立即 fetch 所有音频文件（仅下载，不需要 AudioContext）
-    this.rawBuffers = this.prefetchAll();
-    // fetch 完成后尝试自动播放 BGM
+    // 页面加载时只 fetch BGM（自动播放需要），不阻塞首屏渲染
+    this.rawBuffers = this.prefetchBGM();
     this.rawBuffers.then(() => this.tryAutoplay());
+    // 其他音效延迟到首次交互时再 fetch
   }
 
-  private async prefetchAll(): Promise<Record<string, ArrayBuffer>> {
+  /** 仅 prefetch BGM，保证首屏快速渲染 */
+  private async prefetchBGM(): Promise<Record<string, ArrayBuffer>> {
     const base = import.meta.env.BASE_URL;
-    const files: Record<string, string> = {
-      bgm: `${base}bgm.mp3`,
-      pop: `${base}pop.mp4`,
-      recover: `${base}recover.mp4`,
-      recoverSpecial: `${base}recover-special.mp4`,
-      squeeze: `${base}squeeze.mp4`,
-    };
-    const entries = await Promise.all(
-      Object.entries(files).map(async ([key, url]) => {
-        const resp = await fetch(url);
-        return [key, await resp.arrayBuffer()] as [string, ArrayBuffer];
-      })
-    );
-    return Object.fromEntries(entries);
+    const resp = await fetch(`${base}bgm.mp3`);
+    return { bgm: await resp.arrayBuffer() };
   }
+
+  /** 懒加载其余音效，首次交互时调用 */
+  private prefetchRest(): Promise<void> {
+    if (this._restPrefetched) return this._restPrefetched;
+    this._restPrefetched = (async () => {
+      const base = import.meta.env.BASE_URL;
+      const files: Record<string, string> = {
+        pop: `${base}pop.mp4`,
+        recover: `${base}recover.mp4`,
+        recoverSpecial: `${base}recover-special.mp4`,
+        squeeze: `${base}squeeze.mp4`,
+      };
+      const raw = await this.rawBuffers; // 等待 BGM fetch 完成
+      const entries = await Promise.all(
+        Object.entries(files).map(async ([key, url]) => {
+          const resp = await fetch(url);
+          return [key, await resp.arrayBuffer()] as [string, ArrayBuffer];
+        })
+      );
+      // 合并到 rawBuffers 结果中
+      const allBuffers = { ...raw, ...Object.fromEntries(entries) };
+      (this as any)._rawBuffersResolved = allBuffers;
+    })();
+    return this._restPrefetched;
+  }
+  private _restPrefetched: Promise<void> | null = null;
 
   /** 尝试自动播放 BGM，若被浏览器策略阻止则静默失败 */
   private async tryAutoplay() {
@@ -60,9 +75,11 @@ class BubbleAudioManager {
     }
   }
 
-  /** 用户首次交互时调用：恢复被阻止的 AudioContext 并播放 BGM */
+  /** 用户首次交互时调用：恢复被阻止的 AudioContext + 懒加载其余音效 + 播放 BGM */
   async resume() {
     this.ensureContext();
+    // 触发其余音效的懒加载
+    this.prefetchRest();
     if (!this.popBuffer) {
       await this.decodeAll();
     }
@@ -81,7 +98,9 @@ class BubbleAudioManager {
 
   private async decodeAll() {
     if (this.popBuffer) return; // 已解码过
-    const raw = await this.rawBuffers;
+    // 确保其余音效已 fetch 完成
+    await this.prefetchRest();
+    const raw = (this as any)._rawBuffersResolved || await this.rawBuffers;
     const [bgm, pop, recover, recoverSpecial, squeeze] = await Promise.all([
       this.audioContext!.decodeAudioData(raw.bgm.slice(0)),
       this.audioContext!.decodeAudioData(raw.pop.slice(0)),
