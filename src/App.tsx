@@ -866,7 +866,7 @@ export default function App() {
           far: 100,
         }}
         style={{ position: 'absolute', inset: 0, zIndex: 1 }}
-        dpr={[1, 2]}
+        dpr={[1, Math.min(window.devicePixelRatio, 1.5)]}
         gl={{ antialias: true }}
       >
         <SceneBG />

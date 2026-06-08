@@ -82,6 +82,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
   const ownsGlobalShake = useRef(false); // 本气泡是否在控制全局抖动
   const pressStartTime = useRef(0);
   const squeezeCtrlRef = useRef<{ stop: () => void } | null>(null);
+  const lastVibrateTime = useRef(0); // 长按脉冲震动计时
   // 投影平面设在气泡顶部高度，45°等距视角下视觉位置与XZ坐标正确对应
   const intersectPlane = useMemo(
     () => new THREE.Plane(new THREE.Vector3(0, 1, 0), -(position[1] + radius)),
@@ -274,6 +275,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
     phaseRef.current = 'deflating';
     elapsedRef.current = 0;
     audioManager.play();
+    navigator.vibrate?.(20);
     onDeflate?.();
   };
 
@@ -293,6 +295,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
       elapsedRef.current = 0;
       hoverScaleY.current = 1.2 / cylH; // 设置hover拉高状态，恢复后产生弹性回落
       audioManager.play();
+      navigator.vibrate?.(20);
       onDeflate?.();
     }
   };
@@ -430,7 +433,16 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
         const shakeAmp = radius * 0.03 * pressProgress;
         g.position.x = Math.sin(now * 0.05) * shakeAmp;
         g.position.z = Math.cos(now * 0.1) * shakeAmp;
-    
+
+        // 长按脉冲震动：进度越高频越密
+        if (pressProgress > 0.3) {
+          const interval = pressProgress > 0.7 ? 90 : 170;
+          if (now - lastVibrateTime.current > interval) {
+            navigator.vibrate?.(pressProgress > 0.7 ? 30 : 20);
+            lastVibrateTime.current = now;
+          }
+        }
+
         if (pressProgress >= 1) {
           // 达阈：触发 deflating
           phaseRef.current = 'deflating';
@@ -440,6 +452,7 @@ export function Bubble({ position = [0, 0, 0], rotation = [0, 0, 0], radius = 1,
           squeezeCtrlRef.current = null;
           g.position.x = 0;
           g.position.z = 0;
+          navigator.vibrate?.([50, 30, 50]);
           onDeflate?.();
         }
         return;
